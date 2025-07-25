@@ -1,36 +1,37 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
-st.set_page_config(page_title="Signup Bot Detection Dashboard", layout="wide")
+# Load preprocessed data
+df = pd.read_csv('signupweb.csv')
 
-st.title("📊 Signup Bot Detection Dashboard")
+st.title("Pre-Signup Anomaly Monitor")
 
-uploaded_file = st.file_uploader("Upload the Signup CSV File", type=["csv"])
+# Date Filter
+dates = df['date'].unique()
+selected_date = st.selectbox("Select Date", dates)
+filtered_df = df[df['date'] == selected_date]
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file, parse_dates=['signup_time'])
+# OTPs per IP
+ip_counts = filtered_df.groupby('ip').size().reset_index(name='count')
+fig1 = px.bar(ip_counts[ip_counts['count'] > 20], x='ip', y='count', title="Suspicious IPs")
+st.plotly_chart(fig1)
 
-    st.subheader("🔍 Raw Data Preview")
-    st.dataframe(df.head(), use_container_width=True)
+# OTPs per Device
+device_counts = filtered_df.groupby('device_id').size().reset_index(name='count')
+fig2 = px.bar(device_counts[device_counts['count'] > 20], x='device_id', y='count', title="Suspicious Devices")
+st.plotly_chart(fig2)
 
-    st.subheader("📈 Recaptcha Score Distribution")
-    st.bar_chart(df['recaptcha_score'])
+# Emails per IP
+email_counts = filtered_df.groupby('ip')['email'].nunique().reset_index(name='unique_emails')
+fig3 = px.bar(email_counts[email_counts['unique_emails'] > 10], x='ip', y='unique_emails', title="Emails per IP")
+st.plotly_chart(fig3)
 
-    st.subheader("🕵️ Suspicious Users Detected")
-    suspicious = df[(df['recaptcha_score'] < 0.5) | 
-                    (df['otp_attempts'] > 5) | 
-                    (df['email'].str.contains("mail.ru|tempmail|guerrillamail")) | 
-                    (df['isp'].str.contains("Stark|Crea Nova|Hosting Solution"))]
+# Anomalies Table
+st.markdown("### Raw Anomalous Entries")
+filtered_df = filtered_df[filtered_df['is_anomaly'] == True]
+filtered_df['reviewed'] = False  # Checkbox per row
+edited_df = st.data_editor(filtered_df, use_container_width=True)
 
-    st.write(f"Total suspicious users: {len(suspicious)}")
-    st.dataframe(suspicious[['user_id', 'email', 'signup_time', 'ip_address', 'country', 'recaptcha_score', 'otp_attempts']], use_container_width=True)
-
-    st.subheader("🌍 Country-wise Signups")
-    st.bar_chart(df['country'].value_counts())
-
-    st.subheader("📅 Signups Over Time")
-    signups_by_day = df['signup_time'].dt.date.value_counts().sort_index()
-    st.line_chart(signups_by_day)
-
-else:
-    st.info("Please upload a CSV file to view analysis.")
+# Save reviewed status back to parquet if needed
+# edited_df.to_parquet('updated_anomalies.parquet', index=False)
