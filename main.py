@@ -12,9 +12,9 @@ dates = df['date'].unique()
 selected_date = st.selectbox("Select Date", dates)
 filtered_df = df[df['date'] == selected_date]
 
-# OTPs per IP
-ip_counts = filtered_df.groupby('ip').size().reset_index(name='count')
-fig1 = px.bar(ip_counts[ip_counts['count'] > 20], x='ip', y='count', title="Suspicious IPs")
+# OTPs per x_forwarded_for
+x_forwarded_for_counts = filtered_df.groupby('x_forwarded_for').size().reset_index(name='count')
+fig1 = px.bar(x_forwarded_for_counts[x_forwarded_for_counts['count'] > 20], x='x_forwarded_for', y='count', title="Suspicious x_forwarded_fors")
 st.plotly_chart(fig1)
 
 # OTPs per Device
@@ -22,9 +22,9 @@ device_counts = filtered_df.groupby('device_id').size().reset_index(name='count'
 fig2 = px.bar(device_counts[device_counts['count'] > 20], x='device_id', y='count', title="Suspicious Devices")
 st.plotly_chart(fig2)
 
-# Emails per IP
-email_counts = filtered_df.groupby('ip')['email'].nunique().reset_index(name='unique_emails')
-fig3 = px.bar(email_counts[email_counts['unique_emails'] > 10], x='ip', y='unique_emails', title="Emails per IP")
+# Emails per x_forwarded_for
+email_counts = filtered_df.groupby('x_forwarded_for')['email'].nunique().reset_index(name='unique_emails')
+fig3 = px.bar(email_counts[email_counts['unique_emails'] > 10], x='x_forwarded_for', y='unique_emails', title="Emails per x_forwarded_for")
 st.plotly_chart(fig3)
 
 # Anomalies Table
