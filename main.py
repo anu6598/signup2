@@ -14,7 +14,7 @@ if uploaded_file:
         df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
 
         # Filter for signup-related logs (case-insensitive)
-        signup_logs = df[df['request_path'].str.lower().str.contains('/user/signup', na=False)]
+        df['request_path'].str.contains('/user/signup', na=False)
 
         if signup_logs.empty:
             st.warning("No /user/signup logs found.")
