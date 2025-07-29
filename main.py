@@ -1,37 +1,38 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import io
+from datetime import datetime
 
-# Load preprocessed data
-df = pd.read_csv('signupweb.csv')
+st.set_page_config(page_title="Signup Request Analyzer", layout="wide")
+st.title("📈 Signup Request Per Minute Analyzer")
 
-st.title("Pre-Signup Anomaly Monitor")
+uploaded_file = st.file_uploader("Upload your AES log CSV", type=['csv'])
 
-# Date Filter
-dates = df['date'].unique()
-selected_date = st.selectbox("Select Date", dates)
-filtered_df = df[df['date'] == selected_date]
+if uploaded_file:
+    try:
+        # Load the CSV
+        df = pd.read_csv(uploaded_file)
 
-# OTPs per x_forwarded_for
-x_forwarded_for_counts = filtered_df.groupby('x_forwarded_for').size().reset_index(name='count')
-fig1 = px.bar(x_forwarded_for_counts[x_forwarded_for_counts['count'] > 20], x='x_forwarded_for', y='count', title="Suspicious x_forwarded_fors")
-st.plotly_chart(fig1)
+        # Convert start_time to datetime
+        df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
 
-# OTPs per Device
-device_counts = filtered_df.groupby('device_id').size().reset_index(name='count')
-fig2 = px.bar(device_counts[device_counts['count'] > 20], x='device_id', y='count', title="Suspicious Devices")
-st.plotly_chart(fig2)
+        # Filter only signup requests
+        signup_df = df[df['request_path'].str.contains('/user/signup', na=False)]
 
-# Emails per x_forwarded_for
-email_counts = filtered_df.groupby('x_forwarded_for')['email'].nunique().reset_index(name='unique_emails')
-fig3 = px.bar(email_counts[email_counts['unique_emails'] > 10], x='x_forwarded_for', y='unique_emails', title="Emails per x_forwarded_for")
-st.plotly_chart(fig3)
+        # Round time to nearest minute
+        signup_df['minute'] = signup_df['start_time'].dt.floor('min')
 
-# Anomalies Table
-st.markdown("### Raw Anomalous Entries")
-filtered_df = filtered_df[filtered_df['is_anomaly'] == True]
-filtered_df['reviewed'] = False  # Checkbox per row
-edited_df = st.data_editor(filtered_df, use_container_width=True)
+        # Count signups per minute
+        counts = signup_df.groupby('minute').size().reset_index(name='signup_requests')
 
-# Save reviewed status back to parquet if needed
-# edited_df.to_parquet('updated_anomalies.parquet', index=False)
+        st.success(f"Total signup requests found: {len(signup_df)}")
+        st.line_chart(counts.set_index('minute'))
+
+        # Optionally show table
+        with st.expander("Show raw per-minute counts"):
+            st.dataframe(counts)
+
+    except Exception as e:
+        st.error(f"Error while processing file: {e}")
+else:
+    st.info("Please upload a CSV log file to begin.")
