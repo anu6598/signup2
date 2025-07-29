@@ -17,7 +17,8 @@ if uploaded_file:
         df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
 
         # Filter only signup requests
-        signup_df = df[df['request_path'].str.contains('/user/signup', na=False)]
+        signup_logs = df[df['request_path'].str.lower().str.contains('/user/signup', na=False)]
+
 
         # Round time to nearest minute
         signup_df['minute'] = signup_df['start_time'].dt.floor('min')
