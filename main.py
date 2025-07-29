@@ -1,39 +1,36 @@
 import streamlit as st
 import pandas as pd
-import io
-from datetime import datetime
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Signup Request Analyzer", layout="wide")
-st.title("📈 Signup Request Per Minute Analyzer")
+st.title("Signup Request Analyzer")
 
-uploaded_file = st.file_uploader("Upload your AES log CSV", type=['csv'])
+uploaded_file = st.file_uploader("Upload your log CSV file", type="csv")
 
 if uploaded_file:
     try:
-        # Load the CSV
         df = pd.read_csv(uploaded_file)
 
         # Convert start_time to datetime
         df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
 
-        # Filter only signup requests
+        # Filter for signup-related logs (case-insensitive)
         signup_logs = df[df['request_path'].str.lower().str.contains('/user/signup', na=False)]
 
+        if signup_logs.empty:
+            st.warning("No /user/signup logs found.")
+        else:
+            # Truncate to minute
+            signup_logs['minute'] = signup_logs['start_time'].dt.floor('T')
 
-        # Round time to nearest minute
-        signup_df['minute'] = signup_df['start_time'].dt.floor('min')
+            # Count per minute
+            per_minute_counts = signup_logs.groupby('minute').size().reset_index(name='signup_requests')
 
-        # Count signups per minute
-        counts = signup_df.groupby('minute').size().reset_index(name='signup_requests')
+            # Show data
+            st.subheader("Signup Requests Per Minute")
+            st.dataframe(per_minute_counts)
 
-        st.success(f"Total signup requests found: {len(signup_df)}")
-        st.line_chart(counts.set_index('minute'))
-
-        # Optionally show table
-        with st.expander("Show raw per-minute counts"):
-            st.dataframe(counts)
+            # Plot
+            st.line_chart(data=per_minute_counts.set_index('minute'))
 
     except Exception as e:
         st.error(f"Error while processing file: {e}")
-else:
-    st.info("Please upload a CSV log file to begin.")
