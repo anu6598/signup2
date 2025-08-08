@@ -1,147 +1,120 @@
 import streamlit as st
-import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
-from data_loader import load_signup_data
-from anomaly_detection import detect_anomalies
-from utils import daily_summary, plot_time_series
+import plotly.express as px
+from sklearn.ensemble import IsolationForest
 
-st.set_page_config(page_title="Signup Anomaly Detection", layout="wide")
+# =====================
+# PAGE CONFIG
+# =====================
+st.set_page_config(page_title="Signup Anomaly Detector", layout="wide")
 
-# --------- HEADER ---------
-st.markdown(
-    "<h1 style='text-align:center;'>📊 Signup Anomaly Detection Dashboard</h1>",
-    unsafe_allow_html=True
-)
+# =====================
+# HEADER & INFO BOX
+# =====================
+col1, col2 = st.columns([3, 1])
 
-# --------- EXPLANATION BOX (STATIC) ---------
-st.markdown(
-    """
-    <div style="background-color:#d9fdd3; padding:15px; border-radius:10px;">
-    <h3>🔍 How Anomaly Detection Works</h3>
-    <p>
-    This dashboard uses a combination of <b>Machine Learning</b> and <b>rule-based logic</b> to spot unusual signup patterns:
-    </p>
-    <ul>
-        <li><b>Isolation Forest (ML):</b> Finds patterns that look statistically different from the rest.</li>
-        <li><b>Rules:</b> Flags IPs with more than <b>9 signups in 15 minutes</b> or <b>5 signups in 10 minutes</b>.</li>
-        <li>Also checks for rare HTTP codes and unusually long request durations.</li>
-    </ul>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+with col1:
+    st.markdown("<h1 style='color:#2C3E50;'>🚨 Signup Anomaly Detection Dashboard</h1>", unsafe_allow_html=True)
 
-# --------- FILE UPLOAD ---------
-uploaded_file = st.file_uploader("📂 Upload Signup Log CSV", type=["csv"])
+with col2:
+    st.markdown(
+        """
+        <div style='background-color:#D5F5E3; padding:10px; border-radius:8px;'>
+        <b>How This Works:</b><br>
+        This dashboard uses:
+        <ul>
+            <li><b>Rule-based checks</b> — Detect IPs with unusually high signups in short time.</li>
+            <li><b>Machine Learning</b> — Isolation Forest to flag unusual signup patterns.</li>
+        </ul>
+        Anomalies may indicate suspicious activity or bot signups.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# =====================
+# FILE UPLOAD
+# =====================
+uploaded_file = st.file_uploader("Upload signup data (CSV)", type="csv")
 
 if uploaded_file:
-    # Load data
-    df = load_signup_data(uploaded_file)
-    st.write("### Preview of Uploaded Data")
-    st.dataframe(df.head())
+    df = pd.read_csv(uploaded_file)
 
-    # --------- ANOMALY DETECTION (ML) ---------
-    threshold = st.slider("ML Anomaly Threshold (signups per IP/day)", 1, 50, 5)
+    # =====================
+    # DATA PREP
+    # =====================
+    if "start_time" not in df.columns or "true_client_ip" not in df.columns:
+        st.error("CSV must have 'start_time' and 'true_client_ip' columns.")
+        st.stop()
 
-    df_analyzed, model = detect_anomalies(
-        df,
-        time_col="start_time",
-        ip_col="true_client_ip",
-        threshold=threshold
+    df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce")
+    df = df.dropna(subset=["start_time"])
+
+    # =====================
+    # RULE 1: >9 signups in 15 minutes
+    # =====================
+    df_15 = (
+        df.set_index("start_time")
+          .groupby("true_client_ip")
+          .rolling("15min")
+          .size()
+          .reset_index(name="count_15min")
     )
-
-    # --------- RULE-BASED DETECTION ---------
-    df = df.sort_values(["true_client_ip", "start_time"])
-    
-    # Count signups per IP in rolling 15-min window
-    df["count_15min"] = (
-        df.groupby("true_client_ip")["start_time"]
-          .transform(lambda x: x.rolling("15min").count())
-    )
+    df = df.merge(df_15, on=["true_client_ip", "start_time"], how="left")
     rule_anomalies_15 = df[df["count_15min"] > 9]
 
-    # Count signups per IP in rolling 10-min window
-    df["count_10min"] = (
-        df.groupby("true_client_ip")["start_time"]
-          .transform(lambda x: x.rolling("10min").count())
+    # =====================
+    # RULE 2: >5 signups in 10 minutes (for table)
+    # =====================
+    df_10 = (
+        df.set_index("start_time")
+          .groupby("true_client_ip")
+          .rolling("10min")
+          .size()
+          .reset_index(name="count_10min")
     )
+    df = df.merge(df_10, on=["true_client_ip", "start_time"], how="left")
     table_10min = df[df["count_10min"] > 5]
 
-    # --------- DAILY SUMMARY ---------
-    st.subheader("📅 Daily Summary")
-    summary_df = daily_summary(df_analyzed, date_col="start_time", ip_col="true_client_ip")
-    st.dataframe(summary_df)
+    # =====================
+    # MACHINE LEARNING ANOMALY DETECTION
+    # =====================
+    feature_df = (
+        df.groupby("true_client_ip")
+          .agg(signup_count=("true_client_ip", "size"))
+          .reset_index()
+    )
 
-    st.subheader("📈 Signups per Day")
-    st.altair_chart(plot_time_series(summary_df), use_container_width=True)
+    iso = IsolationForest(contamination=0.02, random_state=42)
+    feature_df["anomaly"] = iso.fit_predict(feature_df[["signup_count"]])
 
-    # --------- ANOMALY EXPLANATION ---------
-    def generate_explanation(df, df_anomalous):
-        total_logs = len(df)
-        total_anomalies = len(df_anomalous)
+    ml_anomalies = feature_df[feature_df["anomaly"] == -1]
+    df_ml_anomalies = df[df["true_client_ip"].isin(ml_anomalies["true_client_ip"])]
 
-        explanations = []
-        freq_threshold = df["true_client_ip"].value_counts().quantile(0.95)
-        high_freq_ips = df_anomalous["true_client_ip"].value_counts()
-        if not high_freq_ips.empty:
-            explanations.append(f"Some IPs made unusually high numbers of requests (above {freq_threshold:.0f} in a day).")
+    # =====================
+    # VISUALS
+    # =====================
+    st.subheader("📊 Anomaly Counts by IP")
+    fig = px.histogram(feature_df, x="signup_count", nbins=30, title="Signup Count Distribution")
+    st.plotly_chart(fig, use_container_width=True)
 
-        if "response_code" in df.columns:
-            rare_codes = df["response_code"].value_counts(normalize=True)
-            rare_codes = rare_codes[rare_codes < 0.02].index
-            if any(code in rare_codes for code in df_anomalous["response_code"]):
-                explanations.append("Several anomalies have rare HTTP response codes (< 2% frequency).")
+    st.subheader("⚠️ Rule-based anomalies (>9 signups in 15 mins)")
+    if not rule_anomalies_15.empty:
+        st.dataframe(rule_anomalies_15[["start_time", "true_client_ip", "user_agent", "count_15min"]])
+    else:
+        st.success("No anomalies found for 15-min rule.")
 
-        if "duration" in df.columns:
-            duration_threshold = df["duration"].quantile(0.95)
-            if any(df_anomalous["duration"] > duration_threshold):
-                explanations.append(f"Some requests had durations above the 95th percentile ({duration_threshold:.2f} seconds).")
+    st.subheader("📋 IPs with >5 signups in 10 mins (Table)")
+    if not table_10min.empty:
+        st.dataframe(table_10min[["start_time", "true_client_ip", "user_agent", "count_10min"]])
+    else:
+        st.info("No IPs with >5 signups in 10 minutes.")
 
-        if not explanations:
-            explanations.append("The Isolation Forest model flagged these logs as statistical outliers.")
+    st.subheader("🤖 ML-detected anomalies")
+    if not df_ml_anomalies.empty:
+        st.dataframe(df_ml_anomalies[["start_time", "true_client_ip", "user_agent"]])
+    else:
+        st.success("No anomalies detected by ML.")
 
-        return f"""
-        **Anomaly Detection Summary**
-        - Total logs analyzed: **{total_logs}**
-        - Total anomalies detected: **{total_anomalies}**
-
-        **Why were these flagged?**
-        {''.join([f'- {reason}\n' for reason in explanations])}
-        """
-
-    st.subheader("📝 ML-Based Anomalies Explanation")
-    st.markdown(generate_explanation(
-        df,
-        df_analyzed[df_analyzed["is_anomaly"]]
-    ))
-
-    # --------- TABLE: RULE-BASED ANOMALIES (15-min > 9) ---------
-    st.subheader("🚨 Rule-Based Anomalies (15-min > 9 signups)")
-    st.dataframe(rule_anomalies_15[["start_time", "true_client_ip", "user_agent"]])
-
-    # --------- TABLE: IPs with 5+ signups in 10 minutes ---------
-    st.subheader("📋 IPs with 5+ Signups in 10 Minutes")
-    st.dataframe(table_10min[["start_time", "true_client_ip", "user_agent"]])
-
-    # --------- HISTOGRAM COMPARISON ---------
-    st.subheader("Histogram: Duration Comparison")
-    fig, ax = plt.subplots(figsize=(8, 4))
-    if "duration" in df.columns:
-        ax.hist(df["duration"], bins=30, alpha=0.5, label="All")
-        ax.hist(df_analyzed[df_analyzed["is_anomaly"]]["duration"], bins=30, alpha=0.5, label="Anomalous", color="red")
-        ax.set_xlabel("Duration")
-        ax.set_ylabel("Count")
-        ax.legend()
-    st.pyplot(fig)
-
-    # --------- TIME-SERIES ANOMALIES ---------
-    st.subheader("Time-Series with Anomalies Highlighted")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    if "duration" in df.columns:
-        df_sorted = df.sort_values("start_time")
-        anomalies_sorted = df_analyzed[df_analyzed["is_anomaly"]].sort_values("start_time")
-        ax.plot(df_sorted["start_time"], df_sorted["duration"], alpha=0.5, label="Normal")
-        ax.scatter(anomalies_sorted["start_time"], anomalies_sorted["duration"], color="red", label="Anomaly", zorder=5)
-        ax.legend()
-    st.pyplot(fig)
+else:
+    st.info("Please upload a CSV file to get started.")
