@@ -1,48 +1,85 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.ensemble import IsolationForest
 from datetime import datetime
 
-# ---------- PAGE CONFIG ----------
-st.set_page_config(page_title="Signup Anomaly Detection", layout="wide")
+st.set_page_config(layout="wide")
 
-# ---------- HEADER ----------
+# ============================
+# SECTION 1: Heading + Info Box
+# ============================
 st.markdown(
-    "<h1 style='text-align: center; color: #2E86C1; margin-bottom: 0;'>🚨 Signup Anomaly Detection Dashboard 🚨</h1>",
-    unsafe_allow_html=True,
+    """
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+        <div style="flex: 1;">
+            <h1 style="margin-bottom: 0;">🚨 Signup Anomaly Detection Dashboard</h1>
+            <p style="margin-top: 5px; font-size: 16px; color: #555;">
+                Detect unusual signup patterns using rule-based and machine learning methods
+            </p>
+        </div>
+        <div style="flex: 1; background-color: #e6ffe6; padding: 15px; border-radius: 10px; border: 1px solid #b3ffb3;">
+            <h3 style="margin-top: 0;">ℹ️ How Anomaly Detection Works</h3>
+            <p style="font-size: 14px; color: #333; line-height: 1.5;">
+                We use two approaches:<br><br>
+                <b>1. Rule-Based:</b> Flags IPs with unusually high signup counts in short time windows
+                (e.g., more than 9 in 15 minutes or more than 5 in 10 minutes).<br>
+                <b>2. Machine Learning:</b> An Isolation Forest model learns the normal signup pattern
+                (signups in last 10 and 15 minutes) and flags IPs whose patterns deviate strongly.
+                Each anomaly comes with an explanation so you know why it was flagged.
+            </p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
-st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)  # spacer
 
-# ---------- EXPLANATION BOX ----------
-st.markdown("""
-<div style='position: absolute; top: 80px; right: 30px; background-color: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 8px; width: 300px;'>
-<h4>How Anomaly Detection Works</h4>
-<p style='font-size: 14px;'>
-We use two layers of anomaly detection:
-<ul>
-<li><b>Rule-Based:</b> Flags any IP with >9 signups in 15 minutes, or >5 in 10 minutes.</li>
-<li><b>Machine Learning:</b> Isolation Forest looks for unusual patterns in signup frequencies.</li>
-</ul>
-</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------- FILE UPLOAD ----------
-uploaded_file = st.file_uploader("📂 Upload your signup CSV", type=["csv"])
-
-if uploaded_file is not None:
+# ============================
+# File Upload
+# ============================
+uploaded_file = st.file_uploader("Upload signup CSV", type="csv")
+if uploaded_file:
     df = pd.read_csv(uploaded_file)
 
-    # Ensure datetime format
-    df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
+    # Ensure datetime
+    df['start_time'] = pd.to_datetime(df['start_time'])
+    df = df.sort_values(['true_client_ip', 'start_time']).reset_index(drop=True)
 
-    # ---------- RULE-BASED DETECTION (robust version) ----------
-    df = df.sort_values(["true_client_ip", "start_time"]).reset_index(drop=True)
+    # Helper numeric timestamp
     df['__ts'] = (df['start_time'].astype('int64') // 10**9).astype(np.int64)
 
-    grouped_times = df.groupby('true_client_ip')['__ts'].apply(list).to_dict()
+    # ============================
+    # SECTION 2: Time Series Graph
+    # ============================
+    st.subheader("📈 Signup Activity Over Time by IP")
 
+    agg_counts = df.groupby(['start_time', 'true_client_ip']).size().reset_index(name='count')
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    scatter = ax.scatter(
+        agg_counts['start_time'],
+        agg_counts['true_client_ip'],
+        s=agg_counts['count'] * 20,
+        alpha=0.6,
+        c=agg_counts['count'],
+        cmap='viridis'
+    )
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("IP Address")
+    ax.set_title("Signup Counts per IP Over Time", fontsize=14)
+    fig.colorbar(scatter, ax=ax, label="Signup Count")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
+
+    # ============================
+    # Rule-Based Detection
+    # ============================
+    st.subheader("🛠 Rule-Based Anomaly Detection")
+
+    # Precompute counts in rolling windows
+    grouped_times = df.groupby('true_client_ip')['__ts'].apply(list).to_dict()
     rows = []
     for ip, times in grouped_times.items():
         times_arr = np.array(times, dtype=np.int64)
@@ -61,43 +98,52 @@ if uploaded_file is not None:
 
     counts_df = pd.DataFrame(rows)
     df = df.merge(counts_df, on=['true_client_ip', '__ts'], how='left')
-    df['count_15min'] = df['count_15min'].fillna(0).astype(int)
-    df['count_10min'] = df['count_10min'].fillna(0).astype(int)
+    df[['count_15min', 'count_10min']] = df[['count_15min', 'count_10min']].fillna(0).astype(int)
 
-    # Rule-based anomalies
-    anomalies_rule_15 = df[df['count_15min'] > 9]
-    anomalies_rule_10 = df[df['count_10min'] > 5]
+    # 15-min > 9
+    rb_15 = df[df['count_15min'] > 9].copy()
+    rb_15['reason'] = rb_15.apply(
+        lambda x: f"IP {x['true_client_ip']} made {x['count_15min']} signups in 15 minutes — above the threshold of 9.",
+        axis=1
+    )
 
-    # ---------- MACHINE LEARNING DETECTION ----------
-    feature_df = df[['count_15min', 'count_10min']].copy()
+    # 10-min >= 5
+    rb_10 = df[df['count_10min'] >= 5].copy()
+    rb_10['reason'] = rb_10.apply(
+        lambda x: f"IP {x['true_client_ip']} made {x['count_10min']} signups in 10 minutes — above the threshold of 5.",
+        axis=1
+    )
+
+    st.markdown("**Rule: More than 9 signups in 15 minutes**")
+    st.dataframe(rb_15[['start_time', 'true_client_ip', 'count_15min', 'reason']])
+
+    st.markdown("**Rule: More than or equal to 5 signups in 10 minutes**")
+    st.dataframe(rb_10[['start_time', 'true_client_ip', 'count_10min', 'reason']])
+
+    # ============================
+    # Machine Learning Detection
+    # ============================
+    st.subheader("🤖 Machine Learning Detected Anomalies")
+
+    features = df[['count_15min', 'count_10min']].copy()
     iso = IsolationForest(contamination=0.01, random_state=42)
-    df['ml_anomaly'] = iso.fit_predict(feature_df)
+    df['ml_anomaly'] = iso.fit_predict(features)
+
     anomalies_ml = df[df['ml_anomaly'] == -1].copy()
 
-    # Generate "reason" for anomalies
     median_15 = df['count_15min'].median()
     median_10 = df['count_10min'].median()
-    reasons = []
-    for _, row in anomalies_ml.iterrows():
-        reason_parts = []
-        if row['count_15min'] > median_15 * 2:
-            reason_parts.append(f"15-min signup spike ({row['count_15min']})")
-        if row['count_10min'] > median_10 * 2:
-            reason_parts.append(f"10-min signup spike ({row['count_10min']})")
-        if not reason_parts:
-            reason_parts.append("Unusual pattern in signup counts")
-        reasons.append("; ".join(reason_parts))
-    anomalies_ml['reason'] = reasons
 
-    # ---------- DISPLAY ----------
-    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)  # spacer
-    st.subheader("🚨 Rule-Based Anomalies (15-min > 9)")
-    st.dataframe(anomalies_rule_15[['true_client_ip', 'user_agent', 'start_time', 'count_15min']])
+    def explain_row(row):
+        reasons = []
+        if row['count_15min'] > 2 * median_15:
+            reasons.append(f"15-min count ({row['count_15min']}) is more than twice the normal median ({median_15}).")
+        if row['count_10min'] > 2 * median_10:
+            reasons.append(f"10-min count ({row['count_10min']}) is more than twice the normal median ({median_10}).")
+        if not reasons:
+            reasons.append("Signup counts are statistically far from typical patterns detected by the model.")
+        return " ".join(reasons)
 
-    st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)  # spacer
-    st.subheader("📋 IPs with 5+ Signups in 10 Minutes")
-    st.dataframe(anomalies_rule_10[['true_client_ip', 'user_agent', 'start_time', 'count_10min']])
+    anomalies_ml['reason'] = anomalies_ml.apply(explain_row, axis=1)
 
-    st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)  # spacer
-    st.subheader("🤖 Machine Learning Detected Anomalies")
-    st.dataframe(anomalies_ml[['true_client_ip', 'user_agent', 'start_time', 'count_15min', 'count_10min', 'reason']])
+    st.dataframe(anomalies_ml[['start_time', 'true_client_ip', 'count_15min', 'count_10min', 'reason']])
