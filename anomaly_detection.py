@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-def detect_anomalies(df, time_col="timestamp", ip_col="ip", threshold=5):
+def detect_anomalies(df, time_col="start_time", ip_col="ip", threshold=5):
     """
     Detect IPs with unusually high signup counts per day.
 
