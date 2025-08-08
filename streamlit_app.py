@@ -214,30 +214,28 @@ df['count_10min'] = df['count_10min'].fillna(0).astype(int)
 # ------------------------------
 st.header("1) Adaptive Time Series (IP vs Time, bubble size = signup count)")
 
-agg_counts = df.groupby(['start_time', 'true_client_ip']).size().reset_index(name='count')
+fig = px.scatter(
+    df,
+    x="time",
+    y="IP",
+    size="signup_count",
+    color="IP",  # optional, color by IP to distinguish
+    hover_data={
+        "time": True,
+        "IP": True,
+        "signup_count": True
+    },
+    title="Adaptive Time Series: IP vs Time"
+)
 
-if agg_counts.empty:
-    st.info("No signup records found to plot.")
-else:
-    fig_scatter = go.Figure()
-    fig_scatter.add_trace(go.Scatter(
-        x=agg_counts['start_time'],
-        y=agg_counts['true_client_ip'],
-        mode='markers',
-        marker=dict(size=np.clip(agg_counts['count'] * 8, 6, 60),
-                    color=agg_counts['count'],
-                    colorscale='Viridis',
-                    showscale=True),
-        hovertemplate='IP: %{y}<br>Time: %{x}<br>Count: %{marker.color}<extra></extra>'
-    ))
-    fig_scatter.update_layout(
-        height=420,
-        margin=dict(l=40, r=20, t=40, b=80),
-        xaxis=dict(title='Time'),
-        yaxis=dict(title='IP (true_client_ip)'),
-        title='Signup counts per IP over time (bubble size = count)'
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+fig.update_layout(
+    xaxis_title="Time",
+    yaxis_title="IP Address",
+    legend_title="IP",
+    height=600
+)
+
+st.plotly_chart(fig, use_container_width=True)
 
 # ------------------------------
 # Section 3: Rule-based anomalies (two tables with explanation)
