@@ -1,5 +1,5 @@
 import streamlit as st
-from data_prep import load_signup_data
+from data_loader import load_signup_data
 from anomaly_detection import detect_anomalies
 from utils import daily_summary, plot_time_series
 
