@@ -215,29 +215,52 @@ df['count_10min'] = df['count_10min'].fillna(0).astype(int)
 # ------------------------------
 st.header("1) Adaptive Time Series (IP vs Time, bubble size = signup count)")
 
-fig = px.scatter(
-    df,
-    x="time",
-    y="IP",
-    size="signup_count",
-    color="IP",  # optional, color by IP to distinguish
-    hover_data={
-        "time": True,
-        "IP": True,
-        "signup_count": True
-    },
-    title="Adaptive Time Series: IP vs Time"
+# Ensure the dataframe is not empty and has the required columns
+required_cols = ['start_time', 'true_client_ip']
+for col in required_cols:
+    if col not in df.columns:
+        st.error(f"Missing column: {col}")
+        st.stop()
+
+# Convert time column to datetime if not already
+if not pd.api.types.is_datetime64_any_dtype(df['start_time']):
+    df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
+
+# Aggregate: count signups per IP per minute
+df_grouped = (
+    df.groupby([pd.Grouper(key='start_time', freq='1min'), 'true_client_ip'])
+      .size()
+      .reset_index(name='signup_count')
 )
 
-fig.update_layout(
-    xaxis_title="Time",
-    yaxis_title="IP Address",
-    legend_title="IP",
-    height=600
-)
+# Drop rows with NaN IP or time
+df_grouped = df_grouped.dropna(subset=['true_client_ip', 'start_time'])
 
-st.plotly_chart(fig, use_container_width=True)
+if df_grouped.empty:
+    st.warning("No data available for the Adaptive Time Series chart.")
+else:
+    fig = px.scatter(
+        df_grouped,
+        x="start_time",
+        y="true_client_ip",
+        size="signup_count",
+        color="true_client_ip",
+        hover_data={
+            "start_time": True,
+            "true_client_ip": True,
+            "signup_count": True
+        },
+        title="Adaptive Time Series: IP vs Time"
+    )
 
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="IP Address",
+        legend_title="IP",
+        height=600
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 # ------------------------------
 # Section 3: Rule-based anomalies (two tables with explanation)
 # ------------------------------
