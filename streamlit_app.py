@@ -213,28 +213,26 @@ df['count_10min'] = df['count_10min'].fillna(0).astype(int)
 # ------------------------------
 # Section 2: Big adaptive time-series scatter (IP on Y, time X, bubble size = count)
 # ------------------------------
-st.header("1) Adaptive Time Series (IP vs Time, bubble size = signup count)")
+st.header("1) Adaptive Time Series (Signups Over Time)")
 
-# Ensure the dataframe is not empty and has the required columns
-required_cols = ['start_time', 'true_client_ip']
-for col in required_cols:
-    if col not in df.columns:
-        st.error(f"Missing column: {col}")
-        st.stop()
+# Ensure required column exists
+if 'start_time' not in df.columns:
+    st.error("Missing column: start_time")
+    st.stop()
 
-# Convert time column to datetime if not already
+# Convert to datetime if needed
 if not pd.api.types.is_datetime64_any_dtype(df['start_time']):
     df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
 
-# Aggregate: count signups per IP per minute
+# Drop NaT
+df = df.dropna(subset=['start_time'])
+
+# Aggregate: count signups per minute
 df_grouped = (
-    df.groupby([pd.Grouper(key='start_time', freq='1min'), 'true_client_ip'])
+    df.groupby(pd.Grouper(key='start_time', freq='1min'))
       .size()
       .reset_index(name='signup_count')
 )
-
-# Drop rows with NaN IP or time
-df_grouped = df_grouped.dropna(subset=['true_client_ip', 'start_time'])
 
 if df_grouped.empty:
     st.warning("No data available for the Adaptive Time Series chart.")
@@ -242,25 +240,25 @@ else:
     fig = px.scatter(
         df_grouped,
         x="start_time",
-        y="true_client_ip",
-        size="signup_count",
-        color="true_client_ip",
+        y="signup_count",
+        size="signup_count",  # optional, remove if not needed
+        color="signup_count", # optional, color by intensity
         hover_data={
             "start_time": True,
-            "true_client_ip": True,
             "signup_count": True
         },
-        title="Adaptive Time Series: IP vs Time"
+        title="Adaptive Time Series: Signups Over Time"
     )
 
     fig.update_layout(
         xaxis_title="Time",
-        yaxis_title="IP Address",
-        legend_title="IP",
+        yaxis_title="Signup Count",
+        legend_title="Signup Count",
         height=600
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
 # ------------------------------
 # Section 3: Rule-based anomalies (two tables with explanation)
 # ------------------------------
