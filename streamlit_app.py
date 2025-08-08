@@ -145,16 +145,16 @@ with left_col:
 with right_col:
     st.markdown(
         """
-        <div style="background:#e6ffea; padding:12px; border-radius:8px; border:1px solid #ccefd9;">
-            <h3 style="margin:0 0 6px 0;">ℹ️ How This Works</h3>
-            <div style="font-size:13px; color:#222; line-height:1.35;">
-                <b>Rule-based</b>: fast deterministic checks (e.g., >9 signups in 15min).<br>
-                <b>ML-based</b>: IsolationForest on short-window counts to find statistical outliers.<br>
-                Click indicator cards below to explore hour/minute/second views.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+       <div style="background:#e6ffea; padding:12px; border-radius:8px; border:1px solid #ccefd9;">
+    <h3 style="margin:0 0 6px 0;">ℹ️ How This Works</h3>
+    <div style="font-size:13px; color:#222; line-height:1.35;">
+        <b>Rule-based</b>: Fast deterministic checks based on <b>IP address</b>. 
+        Flags IPs with more than <b>9 signups in 15 minutes</b> or <b>5 or more signups in 10 minutes</b>.<br>
+        <b>ML-based</b>: Uses <b>IsolationForest</b> to analyze signup activity from each IP in short windows and detect statistical outliers based on historical patterns.<br>
+        Click indicator cards below to explore hour/minute/second views.
+    </div>
+</div>
+
     )
 
 st.markdown("---")
