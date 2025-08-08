@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from sklearn.ensemble import IsolationForest
 from datetime import datetime
+import plotly.express as px
 
 st.set_page_config(layout="wide", page_title="Signup Anomaly Dashboard")
 
