@@ -19,10 +19,14 @@ if uploaded_file:
 
     # ✅ Updated call with correct timestamp & IP column names
     df_analyzed = detect_anomalies(
-        df,
-        time_col="timestamp",
-        ip_col="true_client_ip",
-        threshold=threshold
+    df,
+    time_col="timestamp",
+    ip_col="true_client_ip",
+    threshold=threshold
+)
+
+summary_df = daily_summary(df_analyzed, date_col="timestamp", ip_col="true_client_ip")
+
     )
 
     st.subheader("Daily Summary")
