@@ -1,15 +1,13 @@
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-from data_loader import load_signup_data
+from data_prep import load_signup_data
 from anomaly_detection import detect_anomalies
-from utils import daily_summary
+from utils import daily_summary, plot_time_series
 
-st.set_page_config(page_title="Signup Anomaly Detector", layout="wide")
+st.set_page_config(page_title="Signup Anomaly Detection", layout="wide")
 
-st.title("Signup Anomaly Detector")
+st.title("📊 Signup Anomaly Detection Dashboard")
 
-uploaded_file = st.file_uploader("Upload signup log CSV", type=["csv"])
+uploaded_file = st.file_uploader("Upload Signup Log CSV", type=["csv"])
 
 if uploaded_file:
     df = load_signup_data(uploaded_file)
@@ -17,31 +15,20 @@ if uploaded_file:
 
     threshold = st.slider("Anomaly threshold (signups per IP/day)", 1, 50, 5)
 
-    # ✅ Updated call with correct timestamp & IP column names
-    df_analyzed = detect_anomalies(
-    df,
-    time_col="timestamp",
-    ip_col="true_client_ip",
-    threshold=threshold
-)
-
-summary_df = daily_summary(df_analyzed, date_col="timestamp", ip_col="true_client_ip")
-
-    
+    df_analyzed, model = detect_anomalies(
+        df,
+        time_col="start_time",
+        ip_col="true_client_ip",
+        threshold=threshold
+    )
 
     st.subheader("Daily Summary")
-    summary_df = daily_summary(df_analyzed)
+    summary_df = daily_summary(df_analyzed, date_col="start_time", ip_col="true_client_ip")
     st.dataframe(summary_df)
 
-    st.subheader("Signup Trend Over Time")
-    fig, ax = plt.subplots()
-    ax.plot(summary_df["date"], summary_df["total_signups"], label="Total Signups", marker="o")
-    ax.plot(summary_df["date"], summary_df["anomalies"], label="Anomalies", marker="x", linestyle="--")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Count")
-    ax.legend()
-    st.pyplot(fig)
+    st.subheader("📈 Time Series Chart")
+    chart = plot_time_series(summary_df)
+    st.altair_chart(chart, use_container_width=True)
 
-    st.subheader("Detailed Anomalies")
-    anomalies_df = df_analyzed[df_analyzed["is_anomaly"]]
-    st.dataframe(anomalies_df)
+    st.subheader("Anomalous Records")
+    st.dataframe(df_analyzed[df_analyzed["is_anomaly"]])
