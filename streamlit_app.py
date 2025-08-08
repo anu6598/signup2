@@ -497,108 +497,42 @@ else:
     csv_bytes = display_df.to_csv(index=False).encode('utf-8')
     st.download_button("Download ML-only IP table (CSV)", csv_bytes, "ml_ip_reasons.csv", "text/csv")
 
-# =========================
-# Updated make_hour_minute_second_plot()
-# =========================
-def make_hour_minute_second_plot(df, title, filt_mask=None, hover_cols=None):
-    """
-    Creates a time-of-day plot with optional filtering and hover columns.
-
-    Parameters:
-    df (pd.DataFrame): DataFrame with 'start_time' column
-    title (str): Title for the plot
-    filt_mask (pd.Series or None): Boolean mask to filter the dataframe
-    hover_cols (list of str or None): Extra columns to show on hover
-    """
-    import plotly.express as px
-
-    if filt_mask is not None:
-        data = df[filt_mask].copy()
-    else:
-        data = df.copy()
-
-    # Extract hour-minute-second for plotting
-    data['hms'] = data['start_time'].dt.strftime('%H:%M:%S')
-
-    # Default hover columns
-    base_hover = ['start_time']
-    if hover_cols:
-        for col in hover_cols:
-            if col in data.columns and col not in base_hover:
-                base_hover.append(col)
-
-    fig = px.scatter(
-        data,
-        x='hms',
-        y=data.index,  # just a spread of points
-        title=title,
-        hover_data=base_hover
-    )
-
-    fig.update_xaxes(title='Time of Day (HH:MM:SS)')
-    fig.update_yaxes(title='Event Index', showticklabels=False)
-    fig.update_layout(height=300, margin=dict(l=10, r=10, t=40, b=10))
-
-    return fig
-
-
-# =========================
+# ------------------------------
 # Section 5: 12 Indicator interactive plots (3 per row)
-# =========================
+# ------------------------------
 st.header("4) Indicator Explorer (12 indicators — interactive)")
 
+# We will create 12 indicators with a brief description and a Plotly interactive chart (Hour/Minute/Second toggle).
 # Define indicator filters and descriptions
 indicators = [
-    ("High Volume: frequent /user/signup", 
-     df['request_path'].astype(str).str.contains('/user/signup', na=False),
+    ("High Volume: frequent /user/signup", df['request_path'].astype(str).str.contains('/user/signup', na=False),
      "Counts of request_path = /user/signup; large spikes indicate times with heavy signup traffic."),
-    
-    ("Same IP sending multiple signups", 
-     df['true_client_ip'].notna(),
+    ("Same IP sending multiple signups", df['true_client_ip'].notna(),
      "Counts grouped by IP show if single IP is responsible for many signups."),
-    
-    ("Tightly clustered timestamps (10+ in a minute)", 
-     df['count_10min'] >= 10,
+    ("Tightly clustered timestamps (10+ in a minute)", df['count_10min'] >= 10,
      "Rows where 10-minute window count >= 10; indicates tightly clustered requests."),
-    
-    ("Off-peak (midnight-4am) activity", 
-     df['start_time'].dt.hour.isin([0,1,2,3,4]),
+    ("Off-peak (midnight-4am) activity", df['start_time'].dt.hour.isin([0,1,2,3,4]),
      "Signups during late-night hours which may be unusual for your product."),
-    
-    ("Same IP, multiple user_agents", 
-     df['true_client_ip'].notna(),
+    ("Same IP, multiple user_agents", df['true_client_ip'].notna(),
      "Detect IPs that have multiple distinct user_agent values — could be distributed/bot activity."),
-    
-    ("IPs from unexpected geolocations", 
-     df['x_country_code'].notna(),
+    ("IPs from unexpected geolocations", df['x_country_code'].notna(),
      "Check country codes that are not part of your normal user base."),
-    
-    ("Missing/malformed headers", 
-     df['user_agent'].isna() | df['user_agent'].astype(str).str.strip().eq(''),
+    ("Missing/malformed headers", df['user_agent'].isna() | df['user_agent'].astype(str).str.strip().eq(''),
      "Missing or blank user_agent or other header fields."),
-    
-    ("Known bot indicators (Akamai)", 
-     df['akamai_bot'].notna(),
+    ("Known bot indicators (Akamai)", df['akamai_bot'].notna(),
      "Akamai bot field present (string contains 'bot' or non-empty) — potentially automated traffic."),
-    
-    ("Unusual app versions/platforms", 
-     df['dr_app_version'].isna() | df['dr_platform'].isna(),
+    ("Unusual app versions/platforms", df['dr_app_version'].isna() | df['dr_platform'].isna(),
      "Null or uncommon app version / platform values."),
-    
-    ("Rapid switching of platforms", 
-     df['true_client_ip'].notna(),
+    ("Rapid switching of platforms", df['true_client_ip'].notna(),
      "Same IP showing multiple dr_platform values within a short time window."),
-    
-    ("High OTP request frequency (/user/send-otp)", 
-     df['request_path'].astype(str).str.contains('/user/send-otp', na=False),
+    ("High OTP request frequency (/user/send-otp)", df['request_path'].astype(str).str.contains('/user/send-otp', na=False),
      "Multiple /user/send-otp hits could indicate OTP abuse or credential stuffing."),
-    
-    ("Failed signups (response_code != 200)", 
-     df['response_code'].notna() & (df['response_code'].astype(str) != '200'),
+    ("Failed signups (response_code != 200)", df['response_code'].notna() & (df['response_code'].astype(str) != '200'),
      "Repeated failed signup attempts (HTTP status not 200) may indicate someone attempting to brute force.")
 ]
 
-cols_per_row = 3
+# We'll arrange 4 rows * 3 columns
+cols_per_row = 2
 for i in range(0, len(indicators), cols_per_row):
     cols = st.columns(cols_per_row)
     for j, indicator in enumerate(indicators[i:i+cols_per_row]):
@@ -606,18 +540,14 @@ for i in range(0, len(indicators), cols_per_row):
         with cols[j]:
             st.markdown(f"### {title}")
             st.caption(desc)
+            # Build figure: for some indicators mask_expr is a boolean Series; if it's 'broad' we keep df
             try:
                 mask = mask_expr if isinstance(mask_expr, pd.Series) else (mask_expr)
+                # If the mask is all True (like 'notna') we still want to show relevant aggregation — but we can also keep filter None
                 if mask is None:
                     mask = pd.Series([True]*len(df), index=df.index)
             except Exception:
                 mask = pd.Series([True]*len(df), index=df.index)
 
-            # Pass IPs + other context columns to hover_data
-            fig = make_hour_minute_second_plot(
-                df, 
-                title, 
-                filt_mask=mask,
-                hover_cols=['true_client_ip', 'user_agent', 'dr_platform', 'x_country_code', 'request_path']
-            )
+            fig = make_hour_minute_second_plot(df, title, filt_mask=mask)
             st.plotly_chart(fig, use_container_width=True)
