@@ -1,35 +1,24 @@
 import pandas as pd
 
-def load_signup_data(filepath):
-    df = pd.read_csv(filepath)
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+def load_signup_data(file):
+    """Load signup logs CSV and ensure start_time & IP are clean."""
+    df = pd.read_csv(file)
 
-    if "date" in df.columns and "start_time" in df.columns:
-        # Combine date and time, handle multiple formats
-        df["timestamp"] = pd.to_datetime(
-            df["date"].astype(str) + " " + df["start_time"].astype(str),
-            errors="coerce",
-            infer_datetime_format=True,
-            utc=True
-        )
-    elif "date" in df.columns:
-        df["timestamp"] = pd.to_datetime(
-            df["date"].astype(str),
-            errors="coerce",
-            infer_datetime_format=True,
-            utc=True
-        )
-    elif "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"].astype(str),
-            errors="coerce",
-            infer_datetime_format=True,
-            utc=True
-        )
-    else:
-        raise ValueError("No suitable timestamp columns found in dataset.")
+    # Normalize column names
+    df.columns = df.columns.str.strip().str.lower()
 
-    # Drop rows where timestamp couldn't be parsed
-    df = df.dropna(subset=["timestamp"])
+    # Ensure start_time column exists
+    if "start_time" not in df.columns:
+        raise ValueError("No 'start_time' column found in CSV.")
+
+    # Parse timestamps
+    df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce", utc=True)
+
+    # Drop rows without valid start_time
+    df = df.dropna(subset=["start_time"])
+
+    # Ensure IP column exists
+    if "true_client_ip" not in df.columns:
+        raise ValueError("No 'true_client_ip' column found in CSV.")
 
     return df
