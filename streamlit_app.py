@@ -16,7 +16,14 @@ if uploaded_file:
     st.write("Preview of Uploaded Data", df.head())
 
     threshold = st.slider("Anomaly threshold (signups per IP/day)", 1, 50, 5)
-    df_analyzed = detect_anomalies(df, threshold=threshold)
+
+    # ✅ Updated call with correct timestamp & IP column names
+    df_analyzed = detect_anomalies(
+        df,
+        time_col="timestamp",
+        ip_col="true_client_ip",
+        threshold=threshold
+    )
 
     st.subheader("Daily Summary")
     summary_df = daily_summary(df_analyzed)
