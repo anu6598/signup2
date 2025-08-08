@@ -497,9 +497,54 @@ else:
     csv_bytes = display_df.to_csv(index=False).encode('utf-8')
     st.download_button("Download ML-only IP table (CSV)", csv_bytes, "ml_ip_reasons.csv", "text/csv")
 
-# ------------------------------
+# =========================
+# Updated make_hour_minute_second_plot()
+# =========================
+def make_hour_minute_second_plot(df, title, filt_mask=None, hover_cols=None):
+    """
+    Creates a time-of-day plot with optional filtering and hover columns.
+
+    Parameters:
+    df (pd.DataFrame): DataFrame with 'start_time' column
+    title (str): Title for the plot
+    filt_mask (pd.Series or None): Boolean mask to filter the dataframe
+    hover_cols (list of str or None): Extra columns to show on hover
+    """
+    import plotly.express as px
+
+    if filt_mask is not None:
+        data = df[filt_mask].copy()
+    else:
+        data = df.copy()
+
+    # Extract hour-minute-second for plotting
+    data['hms'] = data['start_time'].dt.strftime('%H:%M:%S')
+
+    # Default hover columns
+    base_hover = ['start_time']
+    if hover_cols:
+        for col in hover_cols:
+            if col in data.columns and col not in base_hover:
+                base_hover.append(col)
+
+    fig = px.scatter(
+        data,
+        x='hms',
+        y=data.index,  # just a spread of points
+        title=title,
+        hover_data=base_hover
+    )
+
+    fig.update_xaxes(title='Time of Day (HH:MM:SS)')
+    fig.update_yaxes(title='Event Index', showticklabels=False)
+    fig.update_layout(height=300, margin=dict(l=10, r=10, t=40, b=10))
+
+    return fig
+
+
+# =========================
 # Section 5: 12 Indicator interactive plots (3 per row)
-# ------------------------------
+# =========================
 st.header("4) Indicator Explorer (12 indicators — interactive)")
 
 # Define indicator filters and descriptions
@@ -568,11 +613,11 @@ for i in range(0, len(indicators), cols_per_row):
             except Exception:
                 mask = pd.Series([True]*len(df), index=df.index)
 
-            # Pass IPs to hover_data
+            # Pass IPs + other context columns to hover_data
             fig = make_hour_minute_second_plot(
                 df, 
                 title, 
                 filt_mask=mask,
-                hover_cols=['true_client_ip', 'user_agent', 'dr_platform']
+                hover_cols=['true_client_ip', 'user_agent', 'dr_platform', 'x_country_code', 'request_path']
             )
             st.plotly_chart(fig, use_container_width=True)
