@@ -286,6 +286,54 @@ if not anomalies_ml.empty:
 else:
     st.success("Isolation Forest did not detect anomalies in this dataset.")
 
+# --- Additional ML model diagnostics ---
+# Calculate anomaly scores
+df['anomaly_score'] = iso.decision_function(features)
+df['anomaly_score_norm'] = (df['anomaly_score'] - df['anomaly_score'].min()) / (df['anomaly_score'].max() - df['anomaly_score'].min())
+
+# Scatter plot: counts vs counts, colored by anomaly status
+fig_ml_scatter = go.Figure()
+fig_ml_scatter.add_trace(go.Scatter(
+    x=df['count_15min'],
+    y=df['count_10min'],
+    mode='markers',
+    marker=dict(
+        size=8,
+        color=df['anomaly_score'], # continuous color scale
+        colorscale='RdBu',
+        colorbar=dict(title="Anomaly Score"),
+        line=dict(width=0.5, color='black')
+    ),
+    text=df['true_client_ip'],
+    name='All Points',
+    hovertemplate='IP: %{text}<br>15-min Count: %{x}<br>10-min Count: %{y}<br>Score: %{marker.color:.3f}<extra></extra>'
+))
+
+# Highlight anomalies
+anom_points = df[df['ml_flag'] == -1]
+fig_ml_scatter.add_trace(go.Scatter(
+    x=anom_points['count_15min'],
+    y=anom_points['count_10min'],
+    mode='markers',
+    marker=dict(size=10, color='red', symbol='x'),
+    name='Anomalies',
+    text=anom_points['true_client_ip'],
+    hovertemplate='IP: %{text}<br>15-min Count: %{x}<br>10-min Count: %{y}<extra></extra>'
+))
+
+fig_ml_scatter.update_layout(
+    title="Isolation Forest Feature Space (Anomalies Highlighted)",
+    xaxis_title="Count in 15 min",
+    yaxis_title="Count in 10 min",
+    height=450
+)
+
+st.plotly_chart(fig_ml_scatter, use_container_width=True)
+
+# Show model parameters & contamination info
+st.caption(f"IsolationForest trained with contamination={iso.contamination}, random_state=42. "
+           "Anomalies are points with ML flag = -1, usually having negative decision_function scores.")
+
 # ------------------------------
 # Section 5: 12 Indicator interactive plots (3 per row)
 # ------------------------------
@@ -340,3 +388,5 @@ for i in range(0, len(indicators), cols_per_row):
 
             fig = make_hour_minute_second_plot(df, title, filt_mask=mask)
             st.plotly_chart(fig, use_container_width=True)
+
+
