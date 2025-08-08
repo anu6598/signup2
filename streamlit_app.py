@@ -335,6 +335,44 @@ st.caption(f"IsolationForest trained with contamination={iso.contamination}, ran
            "Anomalies are points with ML flag = -1, usually having negative decision_function scores.")
 
 # ------------------------------
+# Step 5: Label generation for supervised training
+# ------------------------------
+
+# Start with a clean label column: 0 = normal
+df['label'] = 0
+
+# Rule-based flags
+rule15_ips = set(rb_15['true_client_ip'].unique())
+rule10_ips = set(rb_10['true_client_ip'].unique())
+
+# ML-based flags
+ml_ips = set(anomalies_ml['true_client_ip'].unique())
+
+# Mark IPs as malicious if they appear in any detection set
+df.loc[df['true_client_ip'].isin(rule15_ips.union(rule10_ips).union(ml_ips)), 'label'] = 1
+
+# Optional: add reason text combining all sources
+def combined_reason(row):
+    reasons = []
+    if row['true_client_ip'] in rule15_ips:
+        reasons.append("Rule15 (>9 signups in 15 min)")
+    if row['true_client_ip'] in rule10_ips:
+        reasons.append("Rule10 (>=5 signups in 10 min)")
+    if row['true_client_ip'] in ml_ips:
+        reasons.append(f"ML anomaly (score={row['anomaly_score']:.3f})")
+    return "; ".join(reasons) if reasons else "Normal"
+
+df['label_reason'] = df.apply(combined_reason, axis=1)
+
+# Show label distribution
+st.header("5) Final Labelled Dataset")
+label_counts = df['label'].value_counts().rename({0: 'Normal', 1: 'Malicious'})
+st.bar_chart(label_counts)
+
+st.dataframe(df[['start_time', 'true_client_ip', 'count_15min', 'count_10min',
+                 'user_agent', 'akamai_bot', 'label', 'label_reason']].sort_values('label', ascending=False))
+
+# ------------------------------
 # Section 5: 12 Indicator interactive plots (3 per row)
 # ------------------------------
 st.header("4) Indicator Explorer (12 indicators — interactive)")
