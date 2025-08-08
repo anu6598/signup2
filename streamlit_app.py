@@ -9,6 +9,26 @@ from utils import daily_summary, plot_time_series  # daily summary chart from ut
 st.set_page_config(page_title="Signup Anomaly Detection", layout="wide")
 st.title("📊 Signup Anomaly Detection Dashboard")
 
+# ---------------- HOW IT WORKS INFO BOX ----------------
+with st.expander("ℹ️ How Anomaly Detection Works"):
+    st.markdown("""
+    This dashboard detects unusual signup patterns using **two methods**:
+
+    1. **Rule-based checks**:
+       - Flags IPs with unusually high requests in a single day.
+       - Flags rare HTTP response codes (appear in < 2% of logs).
+       - Flags unusually long request durations (above 95th percentile).
+
+    2. **Isolation Forest model**:
+       - A machine learning model that learns normal traffic patterns.
+       - Flags requests that are statistically unusual (outliers).
+
+    Together, these methods help catch:
+    - Bots or automated scripts.
+    - Unusual client behavior.
+    - Potential attacks or abuse of the signup system.
+    """)
+
 # ---------------- FILE UPLOAD ----------------
 uploaded_file = st.file_uploader("Upload Signup Log CSV", type=["csv"])
 
