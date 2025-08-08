@@ -14,8 +14,8 @@ def detect_anomalies(df, time_col="timestamp", ip_col="ip", threshold=5):
     Returns:
         df with anomaly flag
     """
-    df[time_col] = pd.to_datetime(df[time_col])
-    df["date"] = df[time_col].dt.date
+    df[start_time] = pd.to_datetime(df[start_time])
+    df["date"] = df[start_time].dt.date
 
     daily_counts = df.groupby(["date", ip_col]).size().reset_index(name="signup_count")
     daily_counts["is_anomaly"] = daily_counts["signup_count"] > threshold
