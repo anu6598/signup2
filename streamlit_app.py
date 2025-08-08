@@ -335,42 +335,167 @@ st.caption(f"IsolationForest trained with contamination={iso.contamination}, ran
            "Anomalies are points with ML flag = -1, usually having negative decision_function scores.")
 
 # ------------------------------
-# Step 5: Label generation for supervised training
+# ML-only IP-level explanations table (insert after IsolationForest fit/predict)
 # ------------------------------
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
 
-# Start with a clean label column: 0 = normal
-df['label'] = 0
+# Safety: drop rows with missing IP for IP-level reasoning
+df_ml = df[~df['true_client_ip'].isna()].copy()
+if df_ml.empty:
+    st.info("No IPs available for ML-only explanation table.")
+else:
+    # Ensure anomaly score & samples available (IsolationForest already fitted above)
+    try:
+        df_ml['anomaly_score'] = iso.decision_function(features.loc[df_ml.index])
+        # score_samples is often similar; include it as additional evidence
+        df_ml['score_samples'] = iso.score_samples(features.loc[df_ml.index])
+    except Exception:
+        # fallback if iso not fitted for some reason
+        df_ml['anomaly_score'] = np.nan
+        df_ml['score_samples'] = np.nan
 
-# Rule-based flags
-rule15_ips = set(rb_15['true_client_ip'].unique())
-rule10_ips = set(rb_10['true_client_ip'].unique())
+    # Global stats for feature-based comparisons
+    feat_cols = ['count_15min', 'count_10min']
+    global_mean = df_ml[feat_cols].mean()
+    global_std = df_ml[feat_cols].std(ddof=0).replace(0, np.nan)  # avoid div0
+    # Percentile helper
+    def pctile_of(col, val):
+        return float((df_ml[col] <= val).mean() * 100)
 
-# ML-based flags
-ml_ips = set(anomalies_ml['true_client_ip'].unique())
+    # Compute per-row k-NN mean distance (exclude self by using n_neighbors=6 then ignore col 0)
+    try:
+        nbrs = NearestNeighbors(n_neighbors=min(6, max(2, len(df_ml)))).fit(df_ml[feat_cols])
+        dists, idxs = nbrs.kneighbors(df_ml[feat_cols])
+        # exclude self-distance when present (first column)
+        if dists.shape[1] > 1:
+            row_knn_mean = dists[:, 1:].mean(axis=1)
+        else:
+            row_knn_mean = dists.mean(axis=1)
+        df_ml['_row_knn_mean_dist'] = row_knn_mean
+        median_knn_all = float(np.nanmedian(row_knn_mean))
+    except Exception:
+        df_ml['_row_knn_mean_dist'] = np.nan
+        median_knn_all = np.nan
 
-# Mark IPs as malicious if they appear in any detection set
-df.loc[df['true_client_ip'].isin(rule15_ips.union(rule10_ips).union(ml_ips)), 'label'] = 1
+    # Mahalanobis distance helper (on feature means per IP)
+    cov = np.cov(df_ml[feat_cols].T)
+    # regularize covariance in case of singular matrix
+    eps = 1e-6
+    cov += np.eye(len(feat_cols)) * eps
+    try:
+        inv_cov = np.linalg.inv(cov)
+    except Exception:
+        inv_cov = np.linalg.pinv(cov)
 
-# Optional: add reason text combining all sources
-def combined_reason(row):
-    reasons = []
-    if row['true_client_ip'] in rule15_ips:
-        reasons.append("Rule15 (>9 signups in 15 min)")
-    if row['true_client_ip'] in rule10_ips:
-        reasons.append("Rule10 (>=5 signups in 10 min)")
-    if row['true_client_ip'] in ml_ips:
-        reasons.append(f"ML anomaly (score={row['anomaly_score']:.3f})")
-    return "; ".join(reasons) if reasons else "Normal"
+    # Aggregate per-IP
+    ip_groups = df_ml.groupby('true_client_ip')
+    ip_rows = []
+    for ip, g in ip_groups:
+        n_events = len(g)
+        mean_15 = float(g['count_15min'].mean())
+        max_15 = int(g['count_15min'].max())
+        std_15 = float(g['count_15min'].std(ddof=0)) if n_events>1 else 0.0
 
-df['label_reason'] = df.apply(combined_reason, axis=1)
+        mean_10 = float(g['count_10min'].mean())
+        max_10 = int(g['count_10min'].max())
+        std_10 = float(g['count_10min'].std(ddof=0)) if n_events>1 else 0.0
 
-# Show label distribution
-st.header("5) Final Labelled Dataset")
-label_counts = df['label'].value_counts().rename({0: 'Normal', 1: 'Malicious'})
-st.bar_chart(label_counts)
+        # anomaly scores aggregated (most anomalous = min decision_function)
+        min_score = float(g['anomaly_score'].min()) if 'anomaly_score' in g else np.nan
+        mean_score = float(g['anomaly_score'].mean()) if 'anomaly_score' in g else np.nan
+        min_sample_score = float(g['score_samples'].min()) if 'score_samples' in g else np.nan
 
-st.dataframe(df[['start_time', 'true_client_ip', 'count_15min', 'count_10min',
-                 'user_agent', 'akamai_bot', 'label', 'label_reason']].sort_values('label', ascending=False))
+        # z-scores relative to global population (use max as extreme indicator too)
+        z_mean_15 = (mean_15 - global_mean['count_15min']) / (global_std['count_15min'] if not np.isnan(global_std['count_15min']) else 1.0)
+        z_max_15  = (max_15  - global_mean['count_15min']) / (global_std['count_15min'] if not np.isnan(global_std['count_15min']) else 1.0)
+        z_mean_10 = (mean_10 - global_mean['count_10min']) / (global_std['count_10min'] if not np.isnan(global_std['count_10min']) else 1.0)
+        z_max_10  = (max_10  - global_mean['count_10min']) / (global_std['count_10min'] if not np.isnan(global_std['count_10min']) else 1.0)
+
+        # percentiles for max values
+        pct_max_15 = pctile_of('count_15min', max_15)
+        pct_max_10 = pctile_of('count_10min', max_10)
+
+        # Mahalanobis distance for the IP centroid (mean vector)
+        vec = np.array([mean_15, mean_10]) - np.array([global_mean['count_15min'], global_mean['count_10min']])
+        try:
+            mahal = float(np.sqrt(np.dot(np.dot(vec.T, inv_cov), vec)))
+        except Exception:
+            mahal = float(np.nan)
+
+        # local density: median of row_knn_mean_dist for this IP
+        knn_median = float(np.nanmedian(g['_row_knn_mean_dist'])) if '_row_knn_mean_dist' in g else float(np.nan)
+
+        # primary contributing feature heuristic (which deviates more in absolute z)
+        feat_z = {
+            'count_15min_max': abs(z_max_15),
+            'count_10min_max': abs(z_max_10),
+            'count_15min_mean': abs(z_mean_15),
+            'count_10min_mean': abs(z_mean_10)
+        }
+        primary_feature = max(feat_z, key=feat_z.get)
+        primary_z = feat_z[primary_feature]
+
+        # ML-only label: 1 if any row predicted -1 by IsolationForest
+        ml_label = 1 if (g['ml_flag'] == -1).any() else 0
+
+        # Build an extensive ML-only reason string (do NOT reference rule-based triggers)
+        if ml_label == 1:
+            reason_lines = [
+                f"ML verdict: IsolationForest marked at least one event for this IP as anomalous (ml_flag == -1).",
+                f"Anomaly score (decision_function): min={min_score:.4f}, mean={mean_score:.4f} (lower => more anomalous).",
+                f"Feature evidence (population context): count_15min max={max_15} (~{pct_max_15:.1f}th pctile), mean={mean_15:.2f} (z_mean={z_mean_15:.2f});",
+                f"count_10min max={max_10} (~{pct_max_10:.1f}th pctile), mean={mean_10:.2f} (z_mean={z_mean_10:.2f}).",
+                f"Primary contributing feature (heuristic): {primary_feature} with absolute z ≈ {primary_z:.2f}.",
+                f"Mahalanobis distance (in 2D feature space) = {mahal:.3f} — larger distances indicate the IP's behaviour lies far from the bulk of traffic.",
+                f"Local density (median k-NN distance) = {knn_median:.3f} (global median ≈ {median_knn_all:.3f}) — higher => more isolated from neighbors.",
+                f"Number of events examined for this IP = {n_events}; std devs: count_15min_std={std_15:.2f}, count_10min_std={std_10:.2f}.",
+                "Interpretation: the IsolationForest isolates this IP because one or more of its events are far from the population in the (count_15min, count_10min) feature space —"
+                " the model finds it 'easy' to separate these point(s) with random splits, hence they have short path lengths and negative anomaly scores.",
+                f"Confidence hint: more negative min anomaly_score and higher Mahalanobis + higher k-NN distance => stronger ML evidence."
+            ]
+        else:
+            reason_lines = [
+                "ML verdict: Not flagged by IsolationForest (no events with ml_flag == -1).",
+                f"Aggregate anomaly score mean={mean_score:.4f}, min={min_score:.4f}.",
+                "Interpretation: this IP's (count_15min, count_10min) behaviour is close to the general population in the learned feature space."
+            ]
+
+        reason_text = " ".join(reason_lines)
+
+        ip_rows.append({
+            'true_client_ip': ip,
+            'ml_label': int(ml_label),
+            'n_events': n_events,
+            'min_anomaly_score': min_score,
+            'mean_anomaly_score': mean_score,
+            'max_count_15': max_15,
+            'mean_count_15': mean_15,
+            'max_count_10': max_10,
+            'mean_count_10': mean_10,
+            'pct_max_15': pct_max_15,
+            'pct_max_10': pct_max_10,
+            'z_mean_15': z_mean_15,
+            'z_mean_10': z_mean_10,
+            'mahal_dist': mahal,
+            'knn_median_dist': knn_median,
+            'primary_feature': primary_feature,
+            'primary_z': primary_z,
+            'reason_ml': reason_text
+        })
+
+    ip_ml_df = pd.DataFrame(ip_rows)
+
+    # Keep only IP, label, and very detailed ML reason for display (as requested)
+    display_df = ip_ml_df[['true_client_ip', 'ml_label', 'reason_ml']].rename(
+        columns={'true_client_ip': 'IP', 'ml_label': 'ML_label', 'reason_ml': 'ML_only_reason'}
+    ).sort_values('ML_label', ascending=False)
+
+    st.header("ML-only IP table: IP, ML_label, ML_only_reason")
+    st.dataframe(display_df.reset_index(drop=True))
+    # Optionally allow downloading
+    csv_bytes = display_df.to_csv(index=False).encode('utf-8')
+    st.download_button("Download ML-only IP table (CSV)", csv_bytes, "ml_ip_reasons.csv", "text/csv")
 
 # ------------------------------
 # Section 5: 12 Indicator interactive plots (3 per row)
