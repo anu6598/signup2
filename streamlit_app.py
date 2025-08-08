@@ -27,7 +27,7 @@ if uploaded_file:
 
 summary_df = daily_summary(df_analyzed, date_col="timestamp", ip_col="true_client_ip")
 
-    )
+    
 
     st.subheader("Daily Summary")
     summary_df = daily_summary(df_analyzed)
