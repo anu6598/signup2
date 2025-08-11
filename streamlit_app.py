@@ -236,24 +236,6 @@ df['count_15min'] = df['count_15min'].fillna(0).astype(int)
 df['count_10min'] = df['count_10min'].fillna(0).astype(int)
 
 
-# Ensure start_time is datetime
-df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
-
-# Create a date column
-df['date'] = df['start_time'].dt.date
-
-# Group by date and count request_path values
-signup_summary = (
-    df.groupby('date')['request_path']
-    .count()
-    .reset_index(name='total_count_of_signups')
-    .sort_values(by='date', ascending=False)  # Newest first
-)
-
-# Show table before the Adaptive Time Series chart
-st.subheader("📅 Daily Signup Counts")
-st.dataframe(signup_summary, use_container_width=True)
-
 
 # ------------------------------
 # Section 2: Big adaptive time-series scatter (IP on Y, time X, bubble size = count)
