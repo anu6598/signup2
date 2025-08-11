@@ -137,22 +137,24 @@ def explain_ml_row(row, median_15, median_10):
 
 
 
-# Show table before the Adaptive Time Series chart
-st.subheader("📋 Signup Data Table (start_time vs request_path count)")
+# Safety check before processing
+required_cols = {"start_time", "request_path"}
+if "df" in locals() and required_cols.issubset(df.columns):
+    
+    st.subheader("📋 Signup Data Table (start_time vs request_path count)")
 
-# Count how many request_path entries per start_time
-table_df = (
-    df.groupby("start_time")["request_path"]
-      .count()
-      .reset_index(name="signup_count")
-      .sort_values("start_time")
-)
+    # Group by start_time and count request_path occurrences
+    table_df = (
+        df.groupby("start_time")["request_path"]
+          .count()
+          .reset_index(name="signup_count")
+          .sort_values("start_time")
+    )
 
-# Display the table
-st.dataframe(table_df, use_container_width=True)
+    st.dataframe(table_df, use_container_width=True)
 
-# Then your chart
-st.subheader("📈 Adaptive Time Series (Time vs Signup Count, bubble size = signup count)")
+else:
+    st.warning(f"Missing columns: {required_cols - set(df.columns) if 'df' in locals() else 'df not defined'}")
 
 
 
