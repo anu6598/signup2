@@ -173,17 +173,6 @@ with right_col:
 
 st.markdown("---")
 
-# Assuming your dataframe is called df and has 'start_time' and 'request_path'
-df['date'] = pd.to_datetime(df['start_time']).dt.date
-
-signup_summary = (
-    df.groupby('date')['request_path']
-    .count()
-    .reset_index(name='total_count_of_signups')
-)
-
-st.write(signup_summary)
-
 # ------------------------------
 # File upload
 # ------------------------------
