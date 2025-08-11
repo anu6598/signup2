@@ -137,25 +137,6 @@ def explain_ml_row(row, median_15, median_10):
 
 
 
-# Safety check before processing
-required_cols = {"start_time", "request_path"}
-if "df" in locals() and required_cols.issubset(df.columns):
-    
-    st.subheader("📋 Signup Data Table (start_time vs request_path count)")
-
-    # Group by start_time and count request_path occurrences
-    table_df = (
-        df.groupby("start_time")["request_path"]
-          .count()
-          .reset_index(name="signup_count")
-          .sort_values("start_time")
-    )
-
-    st.dataframe(table_df, use_container_width=True)
-
-else:
-    st.warning(f"Missing columns: {required_cols - set(df.columns) if 'df' in locals() else 'df not defined'}")
-
 
 
 # ------------------------------
