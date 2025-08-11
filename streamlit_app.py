@@ -225,6 +225,23 @@ df['count_15min'] = df['count_15min'].fillna(0).astype(int)
 df['count_10min'] = df['count_10min'].fillna(0).astype(int)
 
 
+# ------------------------------
+# Show Daily Signup Counts
+# ------------------------------
+st.subheader("📅 Daily Total Signups")
+
+# Make sure date column exists
+df['date'] = pd.to_datetime(df['date'])  # replace 'date' with your column if named differently
+
+# Group by date and count request_path
+daily_signups = (
+    df.groupby(df['date'].dt.date)['request_path']
+    .count()
+    .reset_index(name='total_signups')
+)
+
+# Display table
+st.dataframe(daily_signups, use_container_width=True)
 
 # ------------------------------
 # Section 2: Big adaptive time-series scatter (IP on Y, time X, bubble size = count)
