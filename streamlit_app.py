@@ -140,13 +140,14 @@ def explain_ml_row(row, median_15, median_10):
 # ------------------------------
 left_col, right_col = st.columns([3, 1])
 
+
 with left_col:
     st.markdown(
         "<h1 style='margin:0; color:#0B486B;'>🚨 Signup Anomaly Detection Dashboard</h1>",
         unsafe_allow_html=True
     )
     st.markdown(
-        "<p style='margin-top:6px; color:#555;'>Upload signup logs and inspect spikes & anomalies across multiple indicators.</p>",
+        "<p style='margin-top:6px; color:#555;'>Upload signup logs and inspect spikes & anomalies across multiple indicators, focusing on <b>start_time vs signup count</b>.</p>",
         unsafe_allow_html=True
     )
 
