@@ -138,13 +138,20 @@ def explain_ml_row(row, median_15, median_10):
 
 
 # Show table before the Adaptive Time Series chart
-st.subheader("📋 Signup Data Table (start_time vs signup_count)")
+st.subheader("📋 Signup Data Table (start_time vs request_path count)")
 
-# Assuming df has the processed data for the chart
-table_df = df[["start_time", "signup_count"]].sort_values("start_time")
+# Count how many request_path entries per start_time
+table_df = (
+    df.groupby("start_time")["request_path"]
+      .count()
+      .reset_index(name="signup_count")
+      .sort_values("start_time")
+)
+
+# Display the table
 st.dataframe(table_df, use_container_width=True)
 
-# Then your chart code
+# Then your chart
 st.subheader("📈 Adaptive Time Series (Time vs Signup Count, bubble size = signup count)")
 
 
