@@ -135,6 +135,20 @@ def explain_ml_row(row, median_15, median_10):
         reasons.append("Statistical outlier detected by IsolationForest on (count_15min, count_10min).")
     return "; ".join(reasons)
 
+
+
+# Show table before the Adaptive Time Series chart
+st.subheader("📋 Signup Data Table (start_time vs signup_count)")
+
+# Assuming df has the processed data for the chart
+table_df = df[["start_time", "signup_count"]].sort_values("start_time")
+st.dataframe(table_df, use_container_width=True)
+
+# Then your chart code
+st.subheader("📈 Adaptive Time Series (Time vs Signup Count, bubble size = signup count)")
+
+
+
 # ------------------------------
 # Layout: header + static green box on right (no overlap)
 # ------------------------------
