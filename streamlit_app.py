@@ -176,7 +176,7 @@ st.markdown("---")
 # ------------------------------
 # File upload
 # ------------------------------
-uploaded_file = st.file_uploader("Upload signup CSV (columns: start_time, true_client_ip, request_path, response_code, user_agent, dr_dv, dr_app_version, x_country_code, akamai_bot, dr_platform)", type=["csv"])
+uploaded_file = st.file_uploader("Upload signup CSV data")
 if not uploaded_file:
     st.info("Upload a CSV to enable charts and anomaly detection (example columns listed above).")
     st.stop()
@@ -246,7 +246,7 @@ st.dataframe(daily_signups, use_container_width=True)
 # ------------------------------
 # Section 2: Big adaptive time-series scatter (IP on Y, time X, bubble size = count)
 # ------------------------------
-st.header("1) Adaptive Time Series (Time vs Signup Count, bubble size = signup count)")
+st.header("1 Adaptive Time Series")
 
 # Ensure the dataframe is not empty and has the required columns
 required_cols = ['start_time', 'true_client_ip']
