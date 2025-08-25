@@ -1,121 +1,62 @@
+import streamlit as st
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
+import plotly.express as px
 
-# =========================
-# 1. Load and clean dataset
-# =========================
-file_path = Path('/mnt/data/newotp3months - Sheet1.csv')
-df = pd.read_csv(file_path)
+st.set_page_config(page_title="OTP Attack Analyzer", layout="wide")
 
-# Normalize column names
-df.columns = [c.strip().lower().replace('-', '_').replace(' ', '_') for c in df.columns]
+st.title("🔐 OTP Attack Analyzer")
 
-# Map to expected names
-col_map = {}
-for target in ['date', 'otp_count', 'user_count']:
-    match = [c for c in df.columns if c == target]
-    if not match:
-        match = [c for c in df.columns if target.replace('_','') in c.replace('_','')]
-    if match:
-        col_map[target] = match[0]
+# File uploader
+uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
 
-df = df.rename(columns={v: k for k, v in col_map.items()})
+if uploaded_file is not None:
+    # Load CSV
+    df = pd.read_csv(uploaded_file)
 
-# Keep relevant columns
-df = df[['date','otp_count','user_count']].copy()
+    st.subheader("📂 Raw Data Preview")
+    st.dataframe(df.head(20))
 
-# Parse types
-df['date'] = pd.to_datetime(df['date'], errors='coerce', infer_datetime_format=True)
-df['otp_count'] = pd.to_numeric(df['otp_count'], errors='coerce')
-df['user_count'] = pd.to_numeric(df['user_count'], errors='coerce')
+    # Convert start_time to datetime if present
+    if "start_time" in df.columns:
+        df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce")
 
-# Drop bad rows
-df = df.dropna().astype({'otp_count':'int','user_count':'int'})
+    # Define OTP-related request filter
+    otp_keywords = ["/otp", "/send-otp", "/resend-otp", "/verify-otp"]
+    df["is_otp"] = df["request_path"].astype(str).str.contains("|".join(otp_keywords), case=False, na=False)
 
-# Aggregate in case duplicates exist
-df = df.groupby(['date','otp_count'], as_index=False)['user_count'].sum().sort_values(['date','otp_count'])
+    otp_df = df[df["is_otp"]].copy()
 
-# =========================================
-# 2. Daily summary: distribution & metrics
-# =========================================
-daily = df.pivot_table(index='date', columns='otp_count', values='user_count', aggfunc='sum', fill_value=0)
-daily.columns.name = 'otp_count'
+    st.subheader("📊 OTP Requests Detected")
+    st.write(f"Total OTP requests: {len(otp_df)}")
 
-numeric_counts = [c for c in daily.columns if isinstance(c, (int, np.integer))]
-daily['total_users'] = daily[numeric_counts].sum(axis=1)
+    if not otp_df.empty:
+        # Count OTPs per IP in time windows
+        otp_df = otp_df.sort_values("start_time")
+        otp_counts = otp_df.groupby("true_client_ip").resample("3min", on="start_time").size().reset_index(name="otp_count")
 
-# Shares at various thresholds
-for k in [3, 5, 10, 16, 17, 20, 30]:
-    ge_cols = [c for c in numeric_counts if c >= k]
-    daily[f'share_ge_{k}'] = daily[ge_cols].sum(axis=1) / daily['total_users']
+        # Flag anomalies
+        otp_counts["anomaly_3min"] = otp_counts["otp_count"] > 2
+        otp_counts["anomaly_6h"] = otp_counts["otp_count"] > 16
 
-# Weighted mean OTPs per user/day
-daily['weighted_mean_otps'] = (
-    daily[numeric_counts]
-    .mul(pd.Series(numeric_counts, index=numeric_counts), axis=1)
-    .sum(axis=1) / daily['total_users']
-)
+        st.subheader("🚨 Anomaly Detection")
+        st.write("Flagging IPs with more than **2 OTPs in 3 minutes** or **16 OTPs in 6 hours**")
 
-# Flatten summary
-daily_summary = daily[['total_users','weighted_mean_otps',
-                       'share_ge_3','share_ge_5','share_ge_10',
-                       'share_ge_16','share_ge_17','share_ge_20','share_ge_30']].reset_index()
+        anomalies = otp_counts[(otp_counts["anomaly_3min"]) | (otp_counts["anomaly_6h"])]
+        st.dataframe(anomalies)
 
-# Save to CSV
-report_path = Path('/mnt/data/otp_daily_summary_report.csv')
-daily_summary.to_csv(report_path, index=False)
-print(f"Report saved at: {report_path}")
+        # Visualization
+        st.subheader("📈 OTP Request Timeline per IP")
+        fig = px.line(
+            otp_counts,
+            x="start_time",
+            y="otp_count",
+            color="true_client_ip",
+            title="OTP Requests Over Time by IP",
+            markers=True
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-# ===================================
-# 3. Overall statistics (decision-use)
-# ===================================
-total_users = df['user_count'].sum()
-share1 = df.loc[df['otp_count']==1,'user_count'].sum() / total_users
-share2 = df.loc[df['otp_count']==2,'user_count'].sum() / total_users
-share_ge3 = df.loc[df['otp_count']>=3,'user_count'].sum() / total_users
-share_ge16 = df.loc[df['otp_count']>=16,'user_count'].sum() / total_users
-
-print("Overall distribution (user-weighted across all days):")
-print(f"  One OTP:        {share1:.2%}")
-print(f"  Two OTPs:       {share2:.2%}")
-print(f"  ≥3 OTPs:        {share_ge3:.2%}")
-print(f"  ≥16 OTPs/day:   {share_ge16:.2%}")
-print(f"  Weighted mean OTPs/user/day: {daily['weighted_mean_otps'].mean():.2f}")
-
-# ======================
-# 4. Plots for insights
-# ======================
-
-# Distribution across all days
-dist = df.groupby('otp_count')['user_count'].sum().sort_index()
-plt.figure(figsize=(8,5))
-plt.plot(dist.index, dist.values, marker='o')
-plt.title('Distribution of OTP counts per user per day')
-plt.xlabel('OTP count')
-plt.ylabel('Total users across days')
-plt.yscale('log')  # log scale to see long tail
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
-
-# Time series of heavy OTP requesters (>=17/day)
-plt.figure(figsize=(10,5))
-plt.plot(daily_summary['date'], daily_summary['share_ge_17'])
-plt.title('Share of users requesting >=17 OTPs in a day')
-plt.xlabel('Date')
-plt.ylabel('Share of users')
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
-
-# Weighted mean OTPs per user/day over time
-plt.figure(figsize=(10,5))
-plt.plot(daily_summary['date'], daily_summary['weighted_mean_otps'])
-plt.title('Weighted mean OTPs per user per day')
-plt.xlabel('Date')
-plt.ylabel('Mean OTPs')
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
+    else:
+        st.warning("No OTP-related requests found in the uploaded file.")
+else:
+    st.info("👆 Please upload a CSV file to start the analysis.")
