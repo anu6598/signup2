@@ -77,7 +77,7 @@ if uploaded_file is not None:
     # --- Device ID Suspicion ---
     if "dr_dv" in df.columns:
         device_counts = otp_df.groupby(["dr_dv", "minute_bucket"]).size().reset_index(name="otp_count")
-        suspicious_devices = device_counts[device_counts["otp_count"] > 10]
+        suspicious_devices = device_counts[device_counts["otp_count"] > 5]
         st.subheader("📱 Suspicious Device IDs (10+ OTPs/min)")
         st.dataframe(suspicious_devices)
 
