@@ -323,6 +323,54 @@ else:
 st.subheader("Proxy spikes (per IP per day flagged)")
 st.dataframe(spike_ips.sort_values(["proxy_count"], ascending=False).head(200))
 
+# -------------------------
+# Requests per time basis (1min, 10min, 1h, 1d) by Device & IP
+# -------------------------
+st.subheader("📊 Requests per time buckets (Device & IP)")
+
+# Per device ID
+device_time_buckets = (
+    otp_df.groupby(["dr_dv", pd.Grouper(key="timestamp", freq="1T")])
+    .size().reset_index(name="requests_per_min")
+)
+device_time_buckets["requests_10min"] = (
+    otp_df.groupby(["dr_dv", pd.Grouper(key="timestamp", freq="10T")])
+    .size().reset_index(name="requests")["requests"].reindex(device_time_buckets.index).fillna(0).astype(int)
+)
+device_time_buckets["requests_1h"] = (
+    otp_df.groupby(["dr_dv", pd.Grouper(key="timestamp", freq="1H")])
+    .size().reset_index(name="requests")["requests"].reindex(device_time_buckets.index).fillna(0).astype(int)
+)
+device_time_buckets["requests_1d"] = (
+    otp_df.groupby(["dr_dv", pd.Grouper(key="timestamp", freq="1D")])
+    .size().reset_index(name="requests")["requests"].reindex(device_time_buckets.index).fillna(0).astype(int)
+)
+
+st.markdown("**Requests per Device ID (with thresholds applied)**")
+st.dataframe(device_time_buckets.sort_values("requests_per_min", ascending=False).head(100))
+
+# Per IP address
+ip_time_buckets = (
+    otp_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="1T")])
+    .size().reset_index(name="requests_per_min")
+)
+ip_time_buckets["requests_10min"] = (
+    otp_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="10T")])
+    .size().reset_index(name="requests")["requests"].reindex(ip_time_buckets.index).fillna(0).astype(int)
+)
+ip_time_buckets["requests_1h"] = (
+    otp_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="1H")])
+    .size().reset_index(name="requests")["requests"].reindex(ip_time_buckets.index).fillna(0).astype(int)
+)
+ip_time_buckets["requests_1d"] = (
+    otp_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="1D")])
+    .size().reset_index(name="requests")["requests"].reindex(ip_time_buckets.index).fillna(0).astype(int)
+)
+
+st.markdown("**Requests per IP Address (with thresholds applied)**")
+st.dataframe(ip_time_buckets.sort_values("requests_per_min", ascending=False).head(100))
+
+
 # rates summary table downloads
 st.subheader("Downloads")
 st.download_button("Download anomalies (CSV)", display_anomalies.to_csv(index=False).encode("utf-8"), "anomalies.csv", "text/csv")
@@ -330,4 +378,3 @@ st.download_button("Download minute-bucket table (CSV)", minute_bucket_table.to_
 st.download_button("Download suspicious devices (CSV)", suspicious_devices.to_csv(index=False).encode("utf-8"), "suspicious_devices.csv", "text/csv")
 st.download_button("Download bmp-flagged (CSV)", bmp_flagged.to_csv(index=False).encode("utf-8"), "bmp_flagged.csv", "text/csv")
 
-st.success("Detection completed. Adjust thresholds in the sidebar to tune sensitivity and re-run by reloading the page or re-uploading the file.")
