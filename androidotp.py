@@ -311,13 +311,13 @@ if top_bursty_ips:
     except Exception:
         st.dataframe(per_min_top.head())
 
-# BMP histogram
-st.markdown("**BMP score distribution (extracted from akamai_bot)**")
-bmp_hist = otp_df["bmp_score"].dropna()
-if len(bmp_hist) > 0:
-    st.bar_chart(bmp_hist.value_counts().sort_index())
-else:
-    st.info("No BMP scores extracted from akamai_bot (column missing or no digits found).")
+# # BMP histogram
+# st.markdown("**BMP score distribution (extracted from akamai_bot)**")
+# bmp_hist = otp_df["bmp_score"].dropna()
+# if len(bmp_hist) > 0:
+#     st.bar_chart(bmp_hist.value_counts().sort_index())
+# else:
+#     st.info("No BMP scores extracted from akamai_bot (column missing or no digits found).")
 
 # proxy spike table
 st.subheader("Proxy spikes (per IP per day flagged)")
