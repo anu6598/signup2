@@ -300,18 +300,3 @@ else:
     make_download(flagged_repetition, "ip_repetition_outliers")
 """
 
-reqs = """
-streamlit
-pandas
-numpy
-plotly
-"""
-
-# Write files
-with open("/mnt/data/otp_tracker_app.py", "w") as f:
-    f.write(app_code)
-
-with open("/mnt/data/requirements.txt", "w") as f:
-    f.write(reqs.strip())
-
-"/mnt/data/otp_tracker_app.py and /mnt/data/requirements.txt created."
