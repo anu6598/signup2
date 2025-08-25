@@ -6,7 +6,7 @@ import re
 from datetime import timedelta
 
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
-st.title("🔐 OTP Abuse Detection Dashboard (full)")
+st.title("🔐 OTP Abuse Detection Dashboard")
 
 # -------------------------
 # Sidebar: threshold controls
@@ -23,7 +23,6 @@ ip_benchmark_multiplier = st.sidebar.number_input("IP daily benchmark multiplier
 date_filter = st.sidebar.date_input("Filter date (optional) — pick single date or range", [])
 
 st.sidebar.markdown("---")
-st.sidebar.write("Defaults work for typical datasets. Tweak thresholds and re-upload or reload.")
 
 # -------------------------
 # File upload
