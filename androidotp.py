@@ -1,102 +1,114 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="OTP Tracking & Anomaly Detection", layout="wide")
-st.title("🔐 OTP Tracking & Anomaly Detection Dashboard")
+st.set_page_config(page_title="OTP Tracking System", layout="wide")
+st.title("🔐 OTP Tracking & Attack Detection Dashboard")
 
-# Upload file
+# Upload CSV
 uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    st.subheader("📂 Raw Data Preview")
+
+    st.subheader("📋 Raw Data Preview")
     st.dataframe(df.head())
 
-    # Ensure timestamp
+    # Ensure datetime
     if "date" in df.columns and "start_time" in df.columns:
         df["timestamp"] = pd.to_datetime(df["date"] + " " + df["start_time"], errors="coerce")
     elif "start_time" in df.columns:
         df["timestamp"] = pd.to_datetime(df["start_time"], errors="coerce")
+    else:
+        st.error("No valid datetime columns found")
+        st.stop()
 
     df = df.dropna(subset=["timestamp"])
-    df = df.sort_values("timestamp")
-
-    # Minute bucket
     df["minute_bucket"] = df["timestamp"].dt.floor("T")
 
-    # --- Rule 1: OTP attempts per IP in 10-min window ---
-    grouped = df.groupby(["true_client_ip", "minute_bucket"]).size().reset_index(name="signup_attempts")
-    grouped = grouped.sort_values(["true_client_ip", "minute_bucket"])
+    # Focus only on OTP requests
+    otp_df = df[df["request_path"].str.contains("otp", case=False, na=False)]
 
+    # --- Replicating SQL Logic ---
+    grouped = otp_df.groupby(["true_client_ip", "minute_bucket"]).agg(
+        signup_attempts=("request_path", "count"),
+        akamai_epd=("akamai_epd", "max")
+    ).reset_index()
+
+    # Rolling 10-min window per IP
+    grouped = grouped.sort_values(["true_client_ip", "minute_bucket"])
     grouped["attempts_in_10_min"] = grouped.groupby("true_client_ip")["signup_attempts"].transform(
         lambda x: x.rolling("10min", on=grouped["minute_bucket"]).sum()
     )
 
-    # Flag proxy
-    if "akamai_epd" in df.columns:
-        proxy_map = df.groupby("true_client_ip")["akamai_epd"].apply(lambda x: x.notna().any()).to_dict()
-        grouped["is_proxy_ip"] = grouped["true_client_ip"].map(proxy_map).astype(int)
-    else:
-        grouped["is_proxy_ip"] = 0
+    grouped["is_proxy_ip"] = grouped["akamai_epd"].notnull().astype(int)
 
-    st.subheader("🚨 Attack Candidates (more than 10 OTPs in 10 mins or Proxy)")
-    attack_candidates = grouped[(grouped["attempts_in_10_min"] > 10) | (grouped["is_proxy_ip"] == 1)]
+    attack_candidates = grouped[grouped["attempts_in_10_min"] > 10]
+
+    st.subheader("🚨 Attack Candidates (10+ OTPs in 10 min)")
     st.dataframe(attack_candidates)
 
-    # --- Rule 2: Age of IP (unique dates seen) ---
-    df["day"] = df["timestamp"].dt.date
-    ip_age = df.groupby("true_client_ip")["day"].nunique().reset_index(name="unique_days_seen")
-    st.subheader("📅 Age of IPs (Unique Days Seen)")
+    # --- IP Age ---
+    ip_age = otp_df.groupby("true_client_ip")["date"].nunique().reset_index(name="unique_days_seen")
+    st.subheader("📅 IP Age (unique days seen)")
     st.dataframe(ip_age)
 
-    # --- Rule 3: Sudden spike in akamai_epd ---
-    if "akamai_epd" in df.columns:
-        proxy_spikes = df.groupby(["true_client_ip", "day"])["akamai_epd"].apply(lambda x: x.notna().sum()).reset_index(name="proxy_count")
-        proxy_spikes = proxy_spikes[proxy_spikes["proxy_count"] > proxy_spikes["proxy_count"].mean() + 3*proxy_spikes["proxy_count"].std()]
-        st.subheader("⚡ Sudden Spikes in Proxy Usage (akamai_epd)")
-        st.dataframe(proxy_spikes)
+    # --- Proxy Spikes ---
+    proxy_counts = otp_df.groupby(["true_client_ip", "date"]).akamai_epd.apply(lambda x: x.notnull().sum()).reset_index(name="proxy_hits")
+    sudden_spikes = proxy_counts[proxy_counts["proxy_hits"] > proxy_counts["proxy_hits"].mean() + 3*proxy_counts["proxy_hits"].std()]
+    st.subheader("⚡ Sudden Proxy Spikes")
+    st.dataframe(sudden_spikes)
 
-    # --- Rule 4: Requests per minute/hour/day (IP & device) ---
+    # --- Requests/minute, 10min, 1h, 1d ---
+    time_windows = {
+        "1min": "1T",
+        "10min": "10T",
+        "1h": "1H",
+        "1d": "1D"
+    }
+
+    st.subheader("📊 Requests per Time Window")
+    for label, window in time_windows.items():
+        counts = otp_df.set_index("timestamp").groupby("true_client_ip").resample(window).size().reset_index(name="otp_count")
+        st.write(f"**{label} window**")
+        st.dataframe(counts.head())
+
+    # --- Device ID Suspicion ---
     if "dr_dv" in df.columns:
-        device_counts = df.groupby(["dr_dv", df["timestamp"].dt.floor("T")]).size().reset_index(name="req_per_min")
-        st.subheader("📱 Requests per Minute by Device ID")
-        st.dataframe(device_counts.head())
+        device_counts = otp_df.groupby(["dr_dv", "minute_bucket"]).size().reset_index(name="otp_count")
+        suspicious_devices = device_counts[device_counts["otp_count"] > 10]
+        st.subheader("📱 Suspicious Device IDs (10+ OTPs/min)")
+        st.dataframe(suspicious_devices)
 
-    ip_counts = df.groupby(["true_client_ip", df["timestamp"].dt.floor("T")]).size().reset_index(name="req_per_min")
-    st.subheader("🌐 Requests per Minute by IP")
-    st.dataframe(ip_counts.head())
-
-    # --- Rule 5: BMP Score >90 more than 5 times/day ---
+    # --- BMP Score Rule ---
     if "bmp_score" in df.columns:
-        high_bmp = df[df["bmp_score"] > 90]
-        suspicious_bmp = high_bmp.groupby(["true_client_ip", "day"]).size().reset_index(name="count90plus")
-        suspicious_bmp = suspicious_bmp[suspicious_bmp["count90plus"] >= 5]
-        st.subheader("🎯 Suspicious IPs with BMP score >90 at least 5 times/day")
-        st.dataframe(suspicious_bmp)
+        bmp_flags = df[df["bmp_score"] > 90].groupby(["true_client_ip", "date"]).size().reset_index(name="high_score_count")
+        bmp_flags = bmp_flags[bmp_flags["high_score_count"] >= 5]
+        st.subheader("🏴 BMP Score Violations")
+        st.dataframe(bmp_flags)
 
-    # --- Rule 6: IP repetitions baseline ---
-    ip_reps = df.groupby(["true_client_ip", "day"]).size().reset_index(name="daily_count")
-    mean_rep = ip_reps["daily_count"].mean()
-    st.subheader("📊 IP Repetition Benchmarking")
-    st.write(f"Normal daily average: {mean_rep:.2f} requests/IP")
-    abnormal = ip_reps[ip_reps["daily_count"] > mean_rep*2]
-    st.write("IPs exceeding benchmark (2x average):")
-    st.dataframe(abnormal)
+    # --- IP Repetition Benchmark ---
+    ip_reps = otp_df.groupby(["date", "true_client_ip"]).size().reset_index(name="daily_requests")
+    threshold = ip_reps["daily_requests"].mean() + 3*ip_reps["daily_requests"].std()
+    abnormal_ips = ip_reps[ip_reps["daily_requests"] > threshold]
+    st.subheader("📈 Abnormal IP Repetitions")
+    st.dataframe(abnormal_ips)
 
-    # --- Rule 7: Averages over windows (1m, 5m, 10m) ---
-    st.subheader("📈 Average OTP Requests per Window")
-    df.set_index("timestamp", inplace=True)
-    avg_1m = df.resample("1min").size().mean()
-    avg_5m = df.resample("5min").size().mean()
-    avg_10m = df.resample("10min").size().mean()
-    st.write({"1min": avg_1m, "5min": avg_5m, "10min": avg_10m})
+    # --- Avg OTPs requested in 1, 5, 10 mins ---
+    avg_windows = {
+        "1min": "1T",
+        "5min": "5T",
+        "10min": "10T"
+    }
 
-    # --- Visualization: OTP requests timeline ---
-    st.subheader("📉 OTP Requests Timeline")
-    otp_counts = df.resample("1min").size().reset_index(name="otp_count")
-    fig = px.line(otp_counts, x="timestamp", y="otp_count", title="OTP Requests Over Time")
+    st.subheader("📐 Average OTPs per Window")
+    for label, window in avg_windows.items():
+        avg_otps = otp_df.set_index("timestamp").resample(window).size().mean()
+        st.write(f"**{label}:** {avg_otps:.2f} OTPs on average")
+
+    # --- Visualization ---
+    st.subheader("📉 OTP Request Timeline")
+    otp_counts = otp_df.set_index("timestamp").resample("1T").size().reset_index(name="otp_count")
+    fig = px.line(otp_counts, x="timestamp", y="otp_count", title="OTP Requests per Minute")
     st.plotly_chart(fig, use_container_width=True)
-
-else:
-    st.info("👆 Please upload a CSV file to start analysis.")
