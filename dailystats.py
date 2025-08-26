@@ -1,89 +1,95 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
-from datetime import timedelta
+from datetime import datetime, timedelta
+from sklearn.ensemble import IsolationForest
+from prophet import Prophet
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Android OTP Dashboard", layout="wide")
-st.title("📱 Android OTP Dashboard")
+# -----------------------
+# Streamlit UI setup
+# -----------------------
+st.set_page_config(page_title="🚨 Attack Prediction Dashboard", layout="wide")
+st.title("🚨 OTP/Brute-force Attack Detection & Forecasting")
 
-# -------------------------
-# File uploader
-# -------------------------
-uploaded_file = st.file_uploader("Upload OTP CSV file", type=["csv"])
+# File upload
+uploaded_file = st.sidebar.file_uploader("Upload Logs (CSV)", type=["csv"])
 
-if uploaded_file is not None:
+# -----------------------
+# Data Loading
+# -----------------------
+if uploaded_file:
     df = pd.read_csv(uploaded_file)
 
-    # Ensure datetime if exists
-    if "date" in df.columns:
-        try:
-            df["date"] = pd.to_datetime(df["date"]).dt.date
-        except:
-            pass
+    # Normalize column names
+    df.columns = [c.strip().lower() for c in df.columns]
 
-    st.subheader("Daily Stats Summary")
-    # -------------------------
-    # Daily Stats (Example)
-    # -------------------------
-    if "date" in df.columns:
-        daily_summary = df.groupby("date").agg(
-            total_otps=("request_id", "count"),
-            unique_ips=("true_client_ip", "nunique"),
-            unique_devices=("dr_dv", "nunique"),
-        ).reset_index()
-        st.dataframe(daily_summary)
+    # Ensure datetime column
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    elif 'date' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['date'], errors='coerce')
+    else:
+        st.error("❌ No timestamp/date column found in dataset.")
+        st.stop()
 
-    # -------------------------
-    # Category detection logic
-    # -------------------------
-    st.subheader("Category Detection (1-Day Analysis)")
+    # Sort by time
+    df = df.sort_values('timestamp')
 
-    if "date" in df.columns:
-        # pick the first date from dataset
-        day = df["date"].iloc[0]
-        df_day = df[df["date"] == day]
+    st.subheader("Raw Data Preview")
+    st.dataframe(df.head())
 
-        # metrics
-        total_otps = len(df_day)
-        ip_counts = df_day["true_client_ip"].value_counts()
-        device_counts = df_day["dr_dv"].value_counts()
+    # -----------------------
+    # Feature Engineering
+    # -----------------------
+    st.subheader("Feature Engineering")
+    df['hour'] = df['timestamp'].dt.hour
+    df['minute'] = df['timestamp'].dt.minute
+    df['day'] = df['timestamp'].dt.date
 
-        high_ip = any(ip_counts > 25)
-        high_device = any(device_counts > 15)
-        high_total = total_otps > 1000
+    # Request frequency per minute
+    freq = df.set_index('timestamp').resample('1min').size().reset_index(name='requests')
 
-        # proxy condition (dummy, since no proxy column in dataset — replace if available)
-        if "proxy_status" in df_day.columns:
-            proxy_rate = (df_day["proxy_status"] == "proxy").mean()
-        else:
-            proxy_rate = 0  # default to 0%
+    st.line_chart(freq.set_index('timestamp'))
 
-        high_proxy = proxy_rate > 0.7
+    # -----------------------
+    # Anomaly Detection (Isolation Forest)
+    # -----------------------
+    st.subheader("🔍 Anomaly Detection")
+    X = freq[['requests']]
 
-        # determine categories
-        categories = []
-        if high_total or high_ip or high_device or high_proxy:
-            if high_total or high_ip or high_device:
-                categories.append("OTP Abuse/Attack detected")
-                categories.append("HIGH OTP request detected")
-            if high_proxy:
-                categories.append("HIGH proxy status detected")
-        else:
-            categories.append("No suspicious activity detected")
+    iso = IsolationForest(contamination=0.02, random_state=42)
+    freq['anomaly'] = iso.fit_predict(X)
 
-        result_df = pd.DataFrame({
-            "date": [day],
-            "category": [", ".join(categories)]
-        })
+    anomalies = freq[freq['anomaly'] == -1]
 
-        st.table(result_df)
+    st.write(f"Detected {len(anomalies)} anomalies (suspicious spikes). Example:")
+    st.dataframe(anomalies.head())
 
-    # -------------------------
-    # Raw data preview
-    # -------------------------
-    st.subheader("Raw data preview (first 10 rows)")
-    st.dataframe(df.head(10))
+    # -----------------------
+    # Forecasting Next Attack (Prophet)
+    # -----------------------
+    st.subheader("📈 Forecast Next Attack Time")
+
+    df_prophet = freq[['timestamp','requests']].rename(columns={'timestamp':'ds','requests':'y'})
+
+    model = Prophet(interval_width=0.95, daily_seasonality=True)
+    model.fit(df_prophet)
+
+    future = model.make_future_dataframe(periods=60, freq='min')  # Forecast next 60 minutes
+    forecast = model.predict(future)
+
+    # Plot forecast
+    fig, ax = plt.subplots(figsize=(10,5))
+    model.plot(forecast, ax=ax)
+    st.pyplot(fig)
+
+    # Highlight next potential attack
+    next_spike = forecast[forecast['yhat'] > forecast['yhat'].quantile(0.95)].head(1)
+    if not next_spike.empty:
+        st.success(f"⚠️ Next suspicious activity window likely around: **{next_spike['ds'].values[0]}**")
+    else:
+        st.info("No major spikes predicted in the next 60 minutes.")
 
 else:
-    st.info("Please upload a CSV file to get started.")
+    st.info("⬅️ Upload a CSV log file to begin analysis.")
