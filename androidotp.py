@@ -64,56 +64,6 @@ if not uploaded_file:
     st.stop()
 
 
-# -------------------------
-    # 🔍 Categorization Logic
-    # -------------------------
-    summary_rows = []
-    if "date" in df.columns:
-        for day, group in df.groupby("date"):
-            categories = []
-
-            total_otps = len(group)
-            proxy_ratio = None
-            if "is_proxy" in group.columns:
-                proxy_ratio = group["is_proxy"].mean()  # assuming 1 for proxy, 0 for clean
-
-            # Rule 1 - OTP Abuse/Attack
-            if (
-                total_otps > 1000
-                or group["true_client_ip"].value_counts().max() > 25
-                or (proxy_ratio is not None and proxy_ratio > 0.7)
-                or group["dr_dv"].value_counts().max() > 15
-            ):
-                categories.append("OTP Abuse/Attack detected")
-
-            # Rule 2 - High OTP Requests
-            if (
-                group["true_client_ip"].value_counts().max() > 25
-                or total_otps > 1000
-                or group["dr_dv"].value_counts().max() > 15
-            ):
-                categories.append("HIGH OTP request detected")
-
-            # Rule 3 - High Proxy
-            if proxy_ratio is not None and proxy_ratio > 0.7:
-                categories.append("HIGH proxy status detected")
-
-            # Rule 4 - No suspicious activity
-            if not categories:
-                categories.append("No suspicious activity detected")
-
-            summary_rows.append({"date": day, "category": ", ".join(categories)})
-
-        summary_df = pd.DataFrame(summary_rows)
-
-        st.subheader("📊 Daily Suspicious Activity Summary")
-        st.dataframe(summary_df)
-
-    # -------------------------
-    # Raw Data Preview
-    # -------------------------
-    st.subheader("Raw data preview (first 10 rows)")
-    st.dataframe(df.head(10))
 
 
 # -------------------------
@@ -213,6 +163,51 @@ elif isinstance(date_filter, (pd.Timestamp,)) or (isinstance(date_filter, list) 
             otp_df = otp_df[otp_df["date"] == pd.to_datetime(date_filter).date()]
         except:
             pass
+
+# -------------------------
+    # Daily Stats / Categorization Logic
+    # -------------------------
+    categories = []
+
+    for day, group in df.groupby("date"):
+        day_category = []
+
+        total_otps = len(group)
+
+        # 1. OTP Abuse/Attack detected
+        abuse_attack = (
+            total_otps > 1000 or
+            group["true_client_ip"].value_counts().max() > 25 or
+            (group["proxy_status"].mean() > 0.7 if "proxy_status" in group.columns else False) or
+            group["dr_dv"].value_counts().max() > 15
+        )
+        if abuse_attack:
+            day_category.append("OTP Abuse/Attack detected")
+
+        # 2. HIGH OTP request detected
+        high_otp = (
+            total_otps > 1000 or
+            group["true_client_ip"].value_counts().max() > 25 or
+            group["dr_dv"].value_counts().max() > 15
+        )
+        if high_otp:
+            day_category.append("HIGH OTP request detected")
+
+        # 3. HIGH proxy status detected
+        if "proxy_status" in group.columns:
+            if group["proxy_status"].mean() > 0.7:
+                day_category.append("HIGH proxy status detected")
+
+        # 4. No suspicious activity detected
+        if not day_category:
+            day_category.append("No suspicious activity detected")
+
+        categories.append({"date": day, "category": "; ".join(day_category)})
+
+    daily_category_df = pd.DataFrame(categories)
+
+    st.subheader("📊 Daily Categorization Results")
+    st.dataframe(daily_category_df)
 
 # -------------------------
 # Extract BMP score from akamai_bot (digits only)
