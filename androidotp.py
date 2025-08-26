@@ -460,6 +460,64 @@ st.markdown("**Requests per IP Address (with thresholds applied)**")
 st.dataframe(ip_time_buckets.sort_values("requests_per_min", ascending=False).head(100))
 
 
+
+# -------------------------
+# Daily Categorization Table
+# -------------------------
+
+# Assume you have a helper column/flag whether IP is proxy.
+# For now, simulate with a dummy (replace with real API flag).
+if "is_proxy" not in otp_df.columns:
+    otp_df["is_proxy"] = False   # TODO: Replace with actual proxy check API
+
+categories = []
+for day, group in otp_df.groupby("date"):
+    day_category = []
+
+    total_otps = len(group)
+
+    # 1. OTP Abuse/Attack detected
+    abuse_attack = (
+        total_otps > 800 or
+        group["true_client_ip"].value_counts().max() > 25 or
+        (group["is_proxy"].mean() > 0.7 if "is_proxy" in group.columns else False) or
+        group["dr_dv"].value_counts().max() > 15
+    )
+    if abuse_attack:
+        day_category.append("OTP Abuse/Attack detected")
+
+    # 2. HIGH OTP request detected
+    high_otp = (
+        total_otps > 1000 or
+        group["true_client_ip"].value_counts().max() > 25 or
+        group["dr_dv"].value_counts().max() > 15
+    )
+    if high_otp:
+        day_category.append("HIGH OTP request detected")
+
+    # 3. HIGH proxy status detected
+    if "is_proxy" in group.columns and group["is_proxy"].mean() > 0.7:
+        day_category.append("HIGH proxy status detected")
+
+    # 4. No suspicious activity detected
+    if not day_category:
+        day_category.append("No suspicious activity detected")
+
+    categories.append({
+        "date": day,
+        "total_otps": total_otps,
+        "max_requests_ip": group["true_client_ip"].value_counts().max(),
+        "max_requests_device": group["dr_dv"].value_counts().max(),
+        "proxy_percentage": group["is_proxy"].mean() if "is_proxy" in group.columns else None,
+        "category": "; ".join(day_category)
+    })
+
+daily_category_df = pd.DataFrame(categories)
+
+st.subheader("📊 Daily Categorization Results")
+st.dataframe(daily_category_df)
+
+
 # rates summary table downloads
 st.subheader("Downloads")
 st.download_button("Download anomalies (CSV)", display_anomalies.to_csv(index=False).encode("utf-8"), "anomalies.csv", "text/csv")
