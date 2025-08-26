@@ -165,49 +165,61 @@ elif isinstance(date_filter, (pd.Timestamp,)) or (isinstance(date_filter, list) 
             pass
 
 # -------------------------
-    # Daily Stats / Categorization Logic
     # -------------------------
-    categories = []
+# Daily Categorization Table
+# -------------------------
 
-    for day, group in df.groupby("date"):
-        day_category = []
+# Assume you have a helper column/flag whether IP is proxy.
+# For now, simulate with a dummy (replace with real API flag).
+if "is_proxy" not in otp_df.columns:
+    otp_df["is_proxy"] = False   # TODO: Replace with actual proxy check API
 
-        total_otps = len(group)
+categories = []
+for day, group in otp_df.groupby("date"):
+    day_category = []
 
-        # 1. OTP Abuse/Attack detected
-        abuse_attack = (
-            total_otps > 1000 or
-            group["true_client_ip"].value_counts().max() > 25 or
-            (group["proxy_status"].mean() > 0.7 if "proxy_status" in group.columns else False) or
-            group["dr_dv"].value_counts().max() > 15
-        )
-        if abuse_attack:
-            day_category.append("OTP Abuse/Attack detected")
+    total_otps = len(group)
 
-        # 2. HIGH OTP request detected
-        high_otp = (
-            total_otps > 1000 or
-            group["true_client_ip"].value_counts().max() > 25 or
-            group["dr_dv"].value_counts().max() > 15
-        )
-        if high_otp:
-            day_category.append("HIGH OTP request detected")
+    # 1. OTP Abuse/Attack detected
+    abuse_attack = (
+        total_otps > 800 or
+        group["true_client_ip"].value_counts().max() > 25 or
+        (group["is_proxy"].mean() > 0.7 if "is_proxy" in group.columns else False) or
+        group["dr_dv"].value_counts().max() > 15
+    )
+    if abuse_attack:
+        day_category.append("OTP Abuse/Attack detected")
 
-        # 3. HIGH proxy status detected
-        if "proxy_status" in group.columns:
-            if group["proxy_status"].mean() > 0.7:
-                day_category.append("HIGH proxy status detected")
+    # 2. HIGH OTP request detected
+    high_otp = (
+        total_otps > 1000 or
+        group["true_client_ip"].value_counts().max() > 25 or
+        group["dr_dv"].value_counts().max() > 15
+    )
+    if high_otp:
+        day_category.append("HIGH OTP request detected")
 
-        # 4. No suspicious activity detected
-        if not day_category:
-            day_category.append("No suspicious activity detected")
+    # 3. HIGH proxy status detected
+    if "is_proxy" in group.columns and group["is_proxy"].mean() > 0.7:
+        day_category.append("HIGH proxy status detected")
 
-        categories.append({"date": day, "category": "; ".join(day_category)})
+    # 4. No suspicious activity detected
+    if not day_category:
+        day_category.append("No suspicious activity detected")
 
-    daily_category_df = pd.DataFrame(categories)
+    categories.append({
+        "date": day,
+        "total_otps": total_otps,
+        "max_requests_ip": group["true_client_ip"].value_counts().max(),
+        "max_requests_device": group["dr_dv"].value_counts().max(),
+        "proxy_percentage": group["is_proxy"].mean() if "is_proxy" in group.columns else None,
+        "category": "; ".join(day_category)
+    })
 
-    st.subheader("📊 Daily Categorization Results")
-    st.dataframe(daily_category_df)
+daily_category_df = pd.DataFrame(categories)
+
+st.subheader("📊 Daily Categorization Results")
+st.dataframe(daily_category_df)
 
 # -------------------------
 # Extract BMP score from akamai_bot (digits only)
