@@ -62,26 +62,60 @@ uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must
 if not uploaded_file:
     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
     st.stop()
-# -------------------------
-# DAILY STATS (from dailystats.py)
-# -------------------------
-st.markdown("## 📊 Daily Stats")
 
-# Example daily stats code from dailystats.py (replace with your actual code)
-# -------------------------------------------------
-# Assuming you already loaded df somewhere above
-if 'df' in locals():
-    daily_summary = df.groupby('date').agg(
-        total_requests=('request_path', 'count'),
-        unique_ips=('true_client_ip', 'nunique'),
-        unique_devices=('dr_dv', 'nunique')
-    ).reset_index()
 
-    st.write("### Daily Summary")
-    st.dataframe(daily_summary)
-else:
-    st.warning("No data loaded yet for daily stats")
-# -------------------------------------------------
+# -------------------------
+    # 🔍 Categorization Logic
+    # -------------------------
+    summary_rows = []
+    if "date" in df.columns:
+        for day, group in df.groupby("date"):
+            categories = []
+
+            total_otps = len(group)
+            proxy_ratio = None
+            if "is_proxy" in group.columns:
+                proxy_ratio = group["is_proxy"].mean()  # assuming 1 for proxy, 0 for clean
+
+            # Rule 1 - OTP Abuse/Attack
+            if (
+                total_otps > 1000
+                or group["true_client_ip"].value_counts().max() > 25
+                or (proxy_ratio is not None and proxy_ratio > 0.7)
+                or group["dr_dv"].value_counts().max() > 15
+            ):
+                categories.append("OTP Abuse/Attack detected")
+
+            # Rule 2 - High OTP Requests
+            if (
+                group["true_client_ip"].value_counts().max() > 25
+                or total_otps > 1000
+                or group["dr_dv"].value_counts().max() > 15
+            ):
+                categories.append("HIGH OTP request detected")
+
+            # Rule 3 - High Proxy
+            if proxy_ratio is not None and proxy_ratio > 0.7:
+                categories.append("HIGH proxy status detected")
+
+            # Rule 4 - No suspicious activity
+            if not categories:
+                categories.append("No suspicious activity detected")
+
+            summary_rows.append({"date": day, "category": ", ".join(categories)})
+
+        summary_df = pd.DataFrame(summary_rows)
+
+        st.subheader("📊 Daily Suspicious Activity Summary")
+        st.dataframe(summary_df)
+
+    # -------------------------
+    # Raw Data Preview
+    # -------------------------
+    st.subheader("Raw data preview (first 10 rows)")
+    st.dataframe(df.head(10))
+
+
 # -------------------------
 # Load & normalize columns
 # -------------------------
