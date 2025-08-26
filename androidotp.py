@@ -410,14 +410,11 @@ st.dataframe(ip_time_buckets.sort_values("requests_per_min", ascending=False).he
 # -------------------------
 final_categories = []
 for day, group in otp_df.groupby("date"):
-    category = None
-
     total_otps = len(group)
     max_requests_ip = group["true_client_ip"].value_counts().max()
     max_requests_device = group["dr_dv"].value_counts().max()
-    proxy_ratio = group["is_proxy"].mean() if "is_proxy" in group.columns else 0
+    proxy_ratio = group["is_proxy"].mean()  # now works because we created it
 
-    # 1. OTP Abuse/Attack detected
     if (
         total_otps > 1000 or
         max_requests_ip > 25 or
@@ -425,32 +422,24 @@ for day, group in otp_df.groupby("date"):
         max_requests_device > 15
     ):
         category = "OTP Abuse/Attack detected"
-
-    # 2. HIGH OTP request detected
     elif (
         max_requests_ip > 25 or
         total_otps > 1000 or
         max_requests_device > 15
     ):
         category = "HIGH OTP request detected"
-
-    # 3. HIGH proxy status detected
     elif proxy_ratio > 0.7:
         category = "HIGH proxy status detected"
-
-    # 4. No suspicious activity
     else:
         category = "No suspicious activity detected"
 
-    final_categories.append({
-        "date": day,
-        "category": category
-    })
+    final_categories.append({"date": day, "category": category})
 
 final_category_df = pd.DataFrame(final_categories)
 
 st.subheader("📌 Final Daily Categorization (Summary)")
 st.dataframe(final_category_df)
+
 
 
 # rates summary table downloads
