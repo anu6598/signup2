@@ -18,6 +18,26 @@ if page == "Main Dashboard":
 
 elif page == "Daily Stats":
     dailystats.show_page()
+   
+import dailystats  # import your daily stats file
+
+st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
+st.title("🔐 OTP Abuse Detection Dashboard (Main)")
+
+# Use session state to switch between views
+if "page" not in st.session_state:
+    st.session_state.page = "main"
+
+if st.session_state.page == "main":
+    st.write("This is the main OTP abuse detection dashboard.")
+    if st.button("Go to Daily Stats 📊"):
+        st.session_state.page = "dailystats"
+
+elif st.session_state.page == "dailystats":
+    dailystats.show()   # call a function from dailystats.py
+    if st.button("⬅️ Back to Main"):
+        st.session_state.page = "main"
+
 # -------------------------
 # Sidebar: threshold controls
 # -------------------------
