@@ -8,6 +8,16 @@ from datetime import timedelta
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 st.title("🔐 OTP Abuse Detection Dashboard")
 
+# Sidebar navigation
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
+
+if page == "Main Dashboard":
+    st.title("🔐 OTP Abuse Detection Dashboard")
+    st.write("This is your main dashboard...")
+
+elif page == "Daily Stats":
+    dailystats.show_page()
 # -------------------------
 # Sidebar: threshold controls
 # -------------------------
