@@ -7,6 +7,10 @@ import requests
 st.set_page_config(page_title="Daily Stats", layout="wide")
 st.title("📊 Daily Stats — OTP Abuse Rules")
 
+def show_page():
+    st.title("📊 Daily Stats")
+    st.write("Here you can display your daily analysis...")
+
 # -------------------------
 # Helper: Proxy detection API
 # -------------------------
