@@ -62,7 +62,26 @@ uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must
 if not uploaded_file:
     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
     st.stop()
+# -------------------------
+# DAILY STATS (from dailystats.py)
+# -------------------------
+st.markdown("## 📊 Daily Stats")
 
+# Example daily stats code from dailystats.py (replace with your actual code)
+# -------------------------------------------------
+# Assuming you already loaded df somewhere above
+if 'df' in locals():
+    daily_summary = df.groupby('date').agg(
+        total_requests=('request_path', 'count'),
+        unique_ips=('true_client_ip', 'nunique'),
+        unique_devices=('dr_dv', 'nunique')
+    ).reset_index()
+
+    st.write("### Daily Summary")
+    st.dataframe(daily_summary)
+else:
+    st.warning("No data loaded yet for daily stats")
+# -------------------------------------------------
 # -------------------------
 # Load & normalize columns
 # -------------------------
