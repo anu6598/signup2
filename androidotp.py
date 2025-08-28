@@ -1,11 +1,7 @@
-# otp_dashboard_full.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
-from datetime import timedelta
 import dailystats
-
 
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
@@ -44,33 +40,36 @@ def normalize_dataframe(df_raw):
 # -------------------------
 # Page routing
 # -------------------------
-# androidotp.py
-# import streamlit as st
-# import pandas as pd
-# import dailystats  # import your dailystats module
+if page == "Main Dashboard":
+    st.title("🔐 OTP Abuse Detection Dashboard (Main)")
 
-st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
+    uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
+    if uploaded_file:
+        df_raw = pd.read_csv(uploaded_file)
+        st.session_state.df = normalize_dataframe(df_raw)  # save to session
 
-# Sidebar navigation
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
+        st.success("✅ File uploaded and processed!")
+        st.subheader("Raw data preview (first 10 rows)")
+        st.dataframe(st.session_state.df.head(10), use_container_width=True)
 
-# 🔹 Upload CSV once here
-uploaded_file = st.sidebar.file_uploader("Upload your OTP CSV", type=["csv"])
+        st.subheader("Quick stats")
+        st.write(f"Total rows: {len(st.session_state.df)}")
+        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
+        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
+    else:
+        st.info("👆 Upload a CSV file to begin.")
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+elif page == "Daily Stats":
+    dailystats.show(st.session_state.df)  # pass df if available
 
-    if page == "Main Dashboard":
-        st.title("🔐 OTP Abuse Detection Dashboard")
-        st.write("Main dashboard content goes here...")
-        # you can pass df here if needed
 
-    elif page == "Daily Stats":
-        st.title("📊 Daily Stats")
-        dailystats.show_daily_stats(df)  # ✅ pass df to dailystats
-else:
-    st.warning("Please upload a CSV file to continue.")
+
+
+
+
+
+
+
 
 
 
