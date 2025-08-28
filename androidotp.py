@@ -17,7 +17,7 @@ if page == "Main Dashboard":
     st.write("This is your main dashboard...")
 
 elif page == "Daily Stats":
-    dailystats.show_page()
+    dailystats.show()
    
 import dailystats  # import your daily stats file
 
