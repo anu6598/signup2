@@ -6,9 +6,7 @@ import re
 
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-# -------------------------
-# Sidebar navigation
-# -------------------------
+# Sidebar navigation only (no CSV upload here)
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
@@ -16,15 +14,12 @@ page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 if "df" not in st.session_state:
     st.session_state.df = None
 
-
-# -------------------------
-# Normalization helper
-# -------------------------
 def normalize_dataframe(df_raw):
     cols_map = {c: c.strip().lower().replace(" ", "_").replace("-", "_") for c in df_raw.columns}
     df_raw.rename(columns=cols_map, inplace=True)
     df = df_raw.copy()
 
+    # Pick columns dynamically
     def pick_col(possible):
         for p in possible:
             if p in df.columns:
@@ -53,21 +48,20 @@ if page == "Main Dashboard":
     if uploaded_file:
         df_raw = pd.read_csv(uploaded_file)
         st.session_state.df = normalize_dataframe(df_raw)  # save to session
+
         st.success("✅ File uploaded and processed!")
+        st.subheader("Raw data preview (first 10 rows)")
+        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+
+        st.subheader("Quick stats")
+        st.write(f"Total rows: {len(st.session_state.df)}")
+        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
+        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
     else:
         st.info("👆 Upload a CSV file to begin.")
 
-    # Run full OTP analysis if CSV is loaded
-    if st.session_state.df is not None:
-        df = st.session_state.df
-        # 👉 place your long OTP detection / anomaly detection pipeline here
-        # just use df = st.session_state.df instead of re-reading uploaded_file
-
 elif page == "Daily Stats":
-    if st.session_state.df is not None:
-        dailystats.show(st.session_state.df)  # pass df if available
-    else:
-        st.warning("Please upload a CSV from Main Dashboard first.")
+    dailystats.show(st.session_state.df)  # pass df if available
 
 
 # -------------------------
@@ -86,14 +80,14 @@ date_filter = st.sidebar.date_input("Filter date (optional) — pick single date
 st.sidebar.markdown("---")
 
 
-# # -------------------------
-# # File upload
-# # -------------------------
-# uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
+# -------------------------
+# File upload
+# -------------------------
+uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
 
-# if not uploaded_file:
-#     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
-#     st.stop()
+if not uploaded_file:
+    st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
+    st.stop()
 
 
 # -------------------------
