@@ -31,10 +31,10 @@ def show(df):
         max_requests_ip = group["true_client_ip"].value_counts().max() if "true_client_ip" in group else 0
         max_requests_device = group["dr_dv"].value_counts().max() if "dr_dv" in group else 0
 
-        if "is_proxy" in group:
-            proxy_ratio = group["is_proxy"].mean() * 100
-        else:
-            proxy_ratio = 0  # default when column missing
+        # if "is_proxy" in group:
+        #     proxy_ratio = group["is_proxy"].mean() * 100
+        # else:
+        #     proxy_ratio = 0  # default when column missing
 
         # Rule categorization
         if (total_otps > 1000) or (max_requests_ip > 25) or (proxy_ratio > 70) or (max_requests_device > 15):
