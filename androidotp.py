@@ -90,14 +90,14 @@ date_filter = st.sidebar.date_input("Filter date (optional) — pick single date
 
 st.sidebar.markdown("---")
 
-# # -------------------------
-# # File upload
-# # -------------------------
-# uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
+# -------------------------
+# File upload
+# -------------------------
+uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
 
-# if not uploaded_file:
-#     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
-#     st.stop()
+if not uploaded_file:
+    st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
+    st.stop()
 
 
 # -------------------------
