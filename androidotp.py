@@ -48,27 +48,11 @@ if page == "Main Dashboard":
     if uploaded_file:
         df_raw = pd.read_csv(uploaded_file)
         st.session_state.df = normalize_dataframe(df_raw)  # save to session
-
-        st.success("✅ File uploaded and processed!")
-        st.subheader("Raw data preview (first 10 rows)")
-        st.dataframe(st.session_state.df.head(10), use_container_width=True)
-
-        st.subheader("Quick stats")
-        st.write(f"Total rows: {len(st.session_state.df)}")
-        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
-        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
     else:
         st.info("👆 Upload a CSV file to begin.")
 
 elif page == "Daily Stats":
     dailystats.show(st.session_state.df)  # pass df if available
-
-
-
-
-
-
-
 
 
 
