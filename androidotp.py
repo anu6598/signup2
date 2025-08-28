@@ -44,27 +44,33 @@ def normalize_dataframe(df_raw):
 # -------------------------
 # Page routing
 # -------------------------
-if page == "Main Dashboard":
-    st.title("🔐 OTP Abuse Detection Dashboard (Main)")
+# androidotp.py
+# import streamlit as st
+# import pandas as pd
+# import dailystats  # import your dailystats module
 
-    uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
-    if uploaded_file:
-        df_raw = pd.read_csv(uploaded_file)
-        st.session_state.df = normalize_dataframe(df_raw)  # save to session
+st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-        st.success("✅ File uploaded and processed!")
-        st.subheader("Raw data preview (first 10 rows)")
-        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+# Sidebar navigation
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
-        st.subheader("Quick stats")
-        st.write(f"Total rows: {len(st.session_state.df)}")
-        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
-        
-    else:
-        st.info("👆 Upload a CSV file to begin.")
+# 🔹 Upload CSV once here
+uploaded_file = st.sidebar.file_uploader("Upload your OTP CSV", type=["csv"])
 
-elif page == "Daily Stats":
-    dailystats.show(st.session_state.df)  # pass df if available
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+
+    if page == "Main Dashboard":
+        st.title("🔐 OTP Abuse Detection Dashboard")
+        st.write("Main dashboard content goes here...")
+        # you can pass df here if needed
+
+    elif page == "Daily Stats":
+        st.title("📊 Daily Stats")
+        dailystats.show_daily_stats(df)  # ✅ pass df to dailystats
+else:
+    st.warning("Please upload a CSV file to continue.")
 
 
 
@@ -84,14 +90,14 @@ date_filter = st.sidebar.date_input("Filter date (optional) — pick single date
 
 st.sidebar.markdown("---")
 
-# -------------------------
-# File upload
-# -------------------------
-uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
+# # -------------------------
+# # File upload
+# # -------------------------
+# uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
 
-if not uploaded_file:
-    st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
-    st.stop()
+# if not uploaded_file:
+#     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
+#     st.stop()
 
 
 # -------------------------
