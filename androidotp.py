@@ -73,9 +73,6 @@ elif page == "Daily Stats":
 
 
 
-
-
-
 # -------------------------
 # Sidebar: threshold controls
 # -------------------------
@@ -446,4 +443,3 @@ st.download_button("Download anomalies (CSV)", display_anomalies.to_csv(index=Fa
 st.download_button("Download minute-bucket table (CSV)", minute_bucket_table.to_csv(index=False).encode("utf-8"), "minute_bucket_table.csv", "text/csv")
 st.download_button("Download suspicious devices (CSV)", suspicious_devices.to_csv(index=False).encode("utf-8"), "suspicious_devices.csv", "text/csv")
 st.download_button("Download bmp-flagged (CSV)", bmp_flagged.to_csv(index=False).encode("utf-8"), "bmp_flagged.csv", "text/csv")
-
