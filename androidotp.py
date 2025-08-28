@@ -37,6 +37,37 @@ def normalize_dataframe(df_raw):
 
     return df
 
+# -------------------------
+# Extra IP utilities
+# -------------------------
+def collapse_ip(ip, mask_octets=1):
+    """Collapse IP into ranges by masking last N octets.
+    Example: collapse_ip('192.87.42.123', 1) -> '192.87.42.*'
+             collapse_ip('192.87.42.123', 2) -> '192.87.*.*'
+    """
+    if not isinstance(ip, str) or "." not in ip:
+        return ip
+    parts = ip.split(".")
+    for i in range(1, mask_octets+1):
+        if len(parts) >= i:
+            parts[-i] = "*"
+    return ".".join(parts)
+
+def ip_quality(df):
+    """Compute IP quality metrics: age, usage, avg requests/day."""
+    stats = (
+        df.groupby("true_client_ip")
+        .agg(
+            days_seen=("date", "nunique"),
+            first_seen=("timestamp", "min"),
+            last_seen=("timestamp", "max"),
+            total_requests=("timestamp", "count"),
+        )
+        .reset_index()
+    )
+    stats["ip_age_days"] = (stats["last_seen"] - stats["first_seen"]).dt.days + 1
+    stats["avg_reqs_per_day"] = stats["total_requests"] / stats["days_seen"].replace(0, 1)
+    return stats
 
 # -------------------------
 # Page routing
@@ -315,6 +346,49 @@ anomalies["reason"] = anomalies.apply(lambda r: ", ".join(
         ("proxy_spike", r["suspicious_by_proxy_spike"]),
         ("above_benchmark", r["above_benchmark"])
     ] if flag]), axis=1)
+# -------------------------
+# Regex-based IP collapse (grouping by ranges)
+# -------------------------
+otp_df["ip_mask_1"] = otp_df["true_client_ip"].apply(lambda x: collapse_ip(x, 1))
+otp_df["ip_mask_2"] = otp_df["true_client_ip"].apply(lambda x: collapse_ip(x, 2))
+
+masked_ip_counts = (
+    otp_df.groupby("ip_mask_1").size().reset_index(name="request_count")
+    .sort_values("request_count", ascending=False)
+)
+
+st.subheader("Grouped IPs (last octet masked)")
+st.dataframe(masked_ip_counts.head(50))
+
+# -------------------------
+# IP Quality metrics
+# -------------------------
+ip_quality_stats = ip_quality(otp_df)
+st.subheader("IP Quality (age + usage)")
+st.dataframe(ip_quality_stats.sort_values("avg_reqs_per_day", ascending=False).head(50))
+
+# -------------------------
+# Overall summary
+# -------------------------
+st.subheader("📊 Overall Summary")
+summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+
+total_rows = len(otp_df)
+unique_ips = otp_df["true_client_ip"].nunique()
+proxy_ratio = otp_df["akamai_epd"].notna().mean() * 100
+suspicious_ip_count = anomalies[anomalies["reason"] != ""].shape[0]
+suspicious_device_count = suspicious_devices["dr_dv"].nunique()
+
+with summary_col1:
+    st.metric("Total OTP rows", f"{total_rows:,}")
+with summary_col2:
+    st.metric("Unique IPs", unique_ips)
+with summary_col3:
+    st.metric("Proxy ratio (%)", f"{proxy_ratio:.2f}")
+with summary_col4:
+    st.metric("Suspicious IPs", suspicious_ip_count)
+
+st.write(f"Suspicious Devices Detected: {suspicious_device_count}")
 
 # -------------------------
 # UI: filters & display
