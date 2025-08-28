@@ -51,8 +51,7 @@ def show(df):
             "category": category,
             "total_otps": total_otps,
             "max_requests_ip": max_requests_ip,
-            "max_requests_device": max_requests_device,
-            "proxy_ratio": f"{proxy_ratio:.2f}%"
+            "max_requests_device": max_requests_device
         })
 
     # ✅ Display results
