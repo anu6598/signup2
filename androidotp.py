@@ -1,67 +1,77 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import dailystats
-import re
 
-st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-# Sidebar navigation only (no CSV upload here)
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
+def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize dataframe column names and types for consistency."""
+    df.columns = [col.strip().lower() for col in df.columns]
 
-# Initialize session state
-if "df" not in st.session_state:
-    st.session_state.df = None
+    # If start_time or date column exists, standardize as 'date'
+    if "start_time" in df.columns:
+        df["date"] = pd.to_datetime(df["start_time"]).dt.date
+    elif "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
 
-def normalize_dataframe(df_raw):
-    cols_map = {c: c.strip().lower().replace(" ", "_").replace("-", "_") for c in df_raw.columns}
-    df_raw.rename(columns=cols_map, inplace=True)
-    df = df_raw.copy()
-
-    # Pick columns dynamically
-    def pick_col(possible):
-        for p in possible:
-            if p in df.columns:
-                return p
-        return None
-
-    col_ip = pick_col(["true_client_ip", "client_ip", "ip", "remote_addr"])
-    col_device = pick_col(["dr_dv", "device_id", "device"])
-    col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
-
-    df["true_client_ip"] = df[col_ip].astype(str) if col_ip else "unknown"
-    df["dr_dv"] = df[col_device].astype(str) if col_device else np.nan
-    df["akamai_epd"] = df[col_akamai_epd] if col_akamai_epd else np.nan
-    df["is_proxy"] = df["akamai_epd"].notna() & (df["akamai_epd"] != "")
+    # Add is_proxy if akamai_epd exists
+    if "akamai_epd" in df.columns:
+        df["is_proxy"] = df["akamai_epd"].notnull().astype(int)
+    elif "is_proxy" not in df.columns:
+        df["is_proxy"] = 0
 
     return df
 
 
-# -------------------------
-# Page routing
-# -------------------------
-if page == "Main Dashboard":
-    st.title("🔐 OTP Abuse Detection Dashboard (Main)")
+def main():
+    st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-    uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
-    if uploaded_file:
-        df_raw = pd.read_csv(uploaded_file)
-        st.session_state.df = normalize_dataframe(df_raw)  # save to session
+    # -------------------------
+    # Sidebar Navigation
+    # -------------------------
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
-        st.success("✅ File uploaded and processed!")
+    # -------------------------
+    # File upload (only once here)
+    # -------------------------
+    if "df" not in st.session_state:
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload OTP logs CSV",
+            type=["csv"],
+            help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot"
+        )
+
+        if uploaded_file:
+            df_raw = pd.read_csv(uploaded_file)
+            st.session_state.df = normalize_dataframe(df_raw)
+            st.success("✅ File uploaded and processed!")
+        else:
+            st.info("👆 Upload a CSV file to begin.")
+            return  # Stop here until file is uploaded
+
+    df = st.session_state.df
+
+    # -------------------------
+    # Page routing
+    # -------------------------
+    if page == "Main Dashboard":
+        st.title("🔐 OTP Abuse Detection Dashboard (Main)")
+
         st.subheader("Raw data preview (first 10 rows)")
-        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), use_container_width=True)
 
         st.subheader("Quick stats")
-        st.write(f"Total rows: {len(st.session_state.df)}")
-        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
-        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
-    else:
-        st.info("👆 Upload a CSV file to begin.")
+        st.write(f"Total rows: {len(df)}")
+        st.write(f"Unique IPs: {df['true_client_ip'].nunique() if 'true_client_ip' in df else 'N/A'}")
+        st.write(f"Proxy ratio: {df['is_proxy'].mean()*100:.2f}%")
 
-elif page == "Daily Stats":
-    dailystats.show(st.session_state.df)  # pass df if available
+    elif page == "Daily Stats":
+        dailystats.show(df)
+
+
+if __name__ == "__main__":
+    main()
+
 
 
 
