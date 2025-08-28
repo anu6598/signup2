@@ -6,7 +6,9 @@ import re
 
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-# Sidebar navigation only (no CSV upload here)
+# -------------------------
+# Sidebar navigation
+# -------------------------
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
@@ -14,12 +16,15 @@ page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 if "df" not in st.session_state:
     st.session_state.df = None
 
+
+# -------------------------
+# Normalization helper
+# -------------------------
 def normalize_dataframe(df_raw):
     cols_map = {c: c.strip().lower().replace(" ", "_").replace("-", "_") for c in df_raw.columns}
     df_raw.rename(columns=cols_map, inplace=True)
     df = df_raw.copy()
 
-    # Pick columns dynamically
     def pick_col(possible):
         for p in possible:
             if p in df.columns:
@@ -48,20 +53,28 @@ if page == "Main Dashboard":
     if uploaded_file:
         df_raw = pd.read_csv(uploaded_file)
         st.session_state.df = normalize_dataframe(df_raw)  # save to session
+        st.success("✅ File uploaded and processed!")
     else:
         st.info("👆 Upload a CSV file to begin.")
 
+    # Run full OTP analysis if CSV is loaded
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        # 👉 place your long OTP detection / anomaly detection pipeline here
+        # just use df = st.session_state.df instead of re-reading uploaded_file
+
 elif page == "Daily Stats":
-    dailystats.show(st.session_state.df)  # pass df if available
-
-
+    if st.session_state.df is not None:
+        dailystats.show(st.session_state.df)  # pass df if available
+    else:
+        st.warning("Please upload a CSV from Main Dashboard first.")
 
 
 # -------------------------
 # Sidebar: threshold controls
+# (these will apply globally, but analysis only runs if df exists)
 # -------------------------
 st.sidebar.header("Detection thresholds / controls")
-
 burst_threshold = st.sidebar.number_input("Burst threshold (OTPs within 10 min)", value=10, step=1)
 burst_window_mins = st.sidebar.number_input("Burst window (minutes)", value=10, step=1)
 bmp_threshold = st.sidebar.number_input("BMP score threshold", value=90, step=1)
@@ -70,17 +83,17 @@ proxy_repeat_threshold = st.sidebar.number_input("Proxy hits threshold to mark p
 device_min_threshold = st.sidebar.number_input("Device requests threshold per minute", value=10, step=1)
 ip_benchmark_multiplier = st.sidebar.number_input("IP daily benchmark multiplier (for flagging)", value=2.0, step=0.1)
 date_filter = st.sidebar.date_input("Filter date (optional) — pick single date or range", [])
-
 st.sidebar.markdown("---")
 
-# -------------------------
-# File upload
-# -------------------------
-uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
 
-if not uploaded_file:
-    st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
-    st.stop()
+# # -------------------------
+# # File upload
+# # -------------------------
+# uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
+
+# if not uploaded_file:
+#     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
+#     st.stop()
 
 
 # -------------------------
