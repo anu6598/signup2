@@ -408,8 +408,6 @@ st.dataframe(ip_time_buckets.sort_values("requests_per_min", ascending=False).he
 # -------------------------
 # Final Categorization Table (simplified date | category)
 # -------------------------
-# Final Categorization Table (simplified date | category)
-# -------------------------
 st.subheader("🚨 Final Daily Categorization")
 
 final_categories = []
@@ -417,7 +415,7 @@ for day, group in otp_df.groupby("date"):
     total_otps = len(group)
     max_requests_ip = group["true_client_ip"].value_counts().max()
     max_requests_device = group["dr_dv"].value_counts().max()
-    proxy_ratio = group["is_proxy"].mean() * 100  # percentage
+    proxy_ratio = group["is_proxy"].mean() * 100  # now this exists ✅
 
     if (total_otps > 1000) or (max_requests_ip > 25) or (proxy_ratio > 70) or (max_requests_device > 15):
         category = "OTP Abuse/Attack detected"
@@ -439,6 +437,7 @@ for day, group in otp_df.groupby("date"):
 
 final_category_df = pd.DataFrame(final_categories)
 st.dataframe(final_category_df, use_container_width=True)
+
 
 
 
