@@ -6,29 +6,66 @@ import re
 from datetime import timedelta
 import dailystats
 
+
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
+# Sidebar navigation only (no CSV upload here)
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
-# Single CSV uploader (shared across pages)
-uploaded_file = st.sidebar.file_uploader("Upload OTP logs CSV", type=["csv"])
-df = None
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    df.columns = [c.strip().lower() for c in df.columns]
-    # add proxy flag early
+# Initialize session state
+if "df" not in st.session_state:
+    st.session_state.df = None
+
+def normalize_dataframe(df_raw):
+    cols_map = {c: c.strip().lower().replace(" ", "_").replace("-", "_") for c in df_raw.columns}
+    df_raw.rename(columns=cols_map, inplace=True)
+    df = df_raw.copy()
+
+    # Pick columns dynamically
+    def pick_col(possible):
+        for p in possible:
+            if p in df.columns:
+                return p
+        return None
+
+    col_ip = pick_col(["true_client_ip", "client_ip", "ip", "remote_addr"])
+    col_device = pick_col(["dr_dv", "device_id", "device"])
+    col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
+
+    df["true_client_ip"] = df[col_ip].astype(str) if col_ip else "unknown"
+    df["dr_dv"] = df[col_device].astype(str) if col_device else np.nan
+    df["akamai_epd"] = df[col_akamai_epd] if col_akamai_epd else np.nan
     df["is_proxy"] = df["akamai_epd"].notna() & (df["akamai_epd"] != "")
 
+    return df
+
+
+# -------------------------
+# Page routing
+# -------------------------
 if page == "Main Dashboard":
     st.title("🔐 OTP Abuse Detection Dashboard (Main)")
-    if df is not None:
-        st.dataframe(df.head(10))
+
+    uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
+    if uploaded_file:
+        df_raw = pd.read_csv(uploaded_file)
+        st.session_state.df = normalize_dataframe(df_raw)  # save to session
+
+        st.success("✅ File uploaded and processed!")
+        st.subheader("Raw data preview (first 10 rows)")
+        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+
+        st.subheader("Quick stats")
+        st.write(f"Total rows: {len(st.session_state.df)}")
+        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
+        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
     else:
-        st.info("👆 Upload a CSV file from the sidebar to start analysis.")
+        st.info("👆 Upload a CSV file to begin.")
 
 elif page == "Daily Stats":
-    dailystats.show(df)  # pass dataframe down
+    dailystats.show(st.session_state.df)  # pass df if available
+
 
 
 
