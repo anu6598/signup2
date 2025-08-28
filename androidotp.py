@@ -1,100 +1,67 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
 import dailystats
+import re
 
+st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-# -------------------------
-# Normalization
-# -------------------------
-def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = [c.strip().lower() for c in df.columns]
+# Sidebar navigation only (no CSV upload here)
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
-    if "start_time" in df.columns:
-        df["date"] = pd.to_datetime(df["start_time"], errors="coerce").dt.date
-    elif "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+# Initialize session state
+if "df" not in st.session_state:
+    st.session_state.df = None
 
-    if "akamai_epd" in df.columns:
-        df["is_proxy"] = df["akamai_epd"].notnull().astype(int)
-    elif "is_proxy" not in df.columns:
-        df["is_proxy"] = 0
+def normalize_dataframe(df_raw):
+    cols_map = {c: c.strip().lower().replace(" ", "_").replace("-", "_") for c in df_raw.columns}
+    df_raw.rename(columns=cols_map, inplace=True)
+    df = df_raw.copy()
+
+    # Pick columns dynamically
+    def pick_col(possible):
+        for p in possible:
+            if p in df.columns:
+                return p
+        return None
+
+    col_ip = pick_col(["true_client_ip", "client_ip", "ip", "remote_addr"])
+    col_device = pick_col(["dr_dv", "device_id", "device"])
+    col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
+
+    df["true_client_ip"] = df[col_ip].astype(str) if col_ip else "unknown"
+    df["dr_dv"] = df[col_device].astype(str) if col_device else np.nan
+    df["akamai_epd"] = df[col_akamai_epd] if col_akamai_epd else np.nan
+    df["is_proxy"] = df["akamai_epd"].notna() & (df["akamai_epd"] != "")
 
     return df
 
 
 # -------------------------
-# Analysis Logic
+# Page routing
 # -------------------------
-def run_analysis(df: pd.DataFrame):
-    st.sidebar.header("Detection thresholds / controls")
+if page == "Main Dashboard":
+    st.title("🔐 OTP Abuse Detection Dashboard (Main)")
 
-    burst_threshold = st.sidebar.number_input("Burst threshold (OTPs within 10 min)", value=10, step=1)
-    burst_window_mins = st.sidebar.number_input("Burst window (minutes)", value=10, step=1)
-    bmp_threshold = st.sidebar.number_input("BMP score threshold", value=90, step=1)
-    bmp_times_threshold = st.sidebar.number_input("BMP occurrences/day threshold", value=5, step=1)
-    proxy_repeat_threshold = st.sidebar.number_input("Proxy hits threshold to mark proxy IP", value=1, step=1)
-    device_min_threshold = st.sidebar.number_input("Device requests threshold per minute", value=10, step=1)
-    ip_benchmark_multiplier = st.sidebar.number_input("IP daily benchmark multiplier", value=2.0, step=0.1)
-    date_filter = st.sidebar.date_input("Filter date (optional)", [])
+    uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"])
+    if uploaded_file:
+        df_raw = pd.read_csv(uploaded_file)
+        st.session_state.df = normalize_dataframe(df_raw)  # save to session
 
-    # -------------------------
-    # Raw data preview
-    # -------------------------
-    st.subheader("Raw data preview (first 10 rows)")
-    st.dataframe(df.head(10), use_container_width=True)
+        st.success("✅ File uploaded and processed!")
+        st.subheader("Raw data preview (first 10 rows)")
+        st.dataframe(st.session_state.df.head(10), use_container_width=True)
 
-    # your entire existing OTP detection pipeline goes here
-    # (grouped_rolled, anomalies, suspicious_devices, visualizations, downloads, etc.)
-    # just reuse otp_df instead of reloading uploaded_file
+        st.subheader("Quick stats")
+        st.write(f"Total rows: {len(st.session_state.df)}")
+        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
+        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
+    else:
+        st.info("👆 Upload a CSV file to begin.")
 
-    # Example quick stat to confirm it's working
-    st.subheader("Quick stats")
-    st.write(f"Total rows: {len(df)}")
-    if "true_client_ip" in df.columns:
-        st.write(f"Unique IPs: {df['true_client_ip'].nunique()}")
-    st.write(f"Proxy ratio: {df['is_proxy'].mean()*100:.2f}%")
-
-    # At the end, show anomalies, devices, downloads, etc.
-    # (take your long block and indent it inside here, replacing `uploaded_file` with `df`)
-
-
-# -------------------------
-# Main App with Navigation
-# -------------------------
-def main():
-    st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
-
-    st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
-
-    if "df" not in st.session_state:
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload OTP logs CSV",
-            type=["csv"],
-            help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot"
-        )
-        if uploaded_file:
-            df_raw = pd.read_csv(uploaded_file)
-            st.session_state.df = normalize_dataframe(df_raw)
-            st.success("✅ File uploaded and processed!")
-        else:
-            st.info("👆 Upload a CSV file to begin.")
-            return
-
-    df = st.session_state.df
-
-    if page == "Main Dashboard":
-        st.title("🔐 OTP Abuse Detection Dashboard (Main)")
-        run_analysis(df)
-
-    elif page == "Daily Stats":
-        dailystats.show(df)
-
-
-if __name__ == "__main__":
-    main()
+elif page == "Daily Stats":
+    dailystats.show(st.session_state.df)  # pass df if available
 
 
 
