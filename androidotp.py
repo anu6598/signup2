@@ -1,19 +1,21 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import re
 import dailystats
 
 
+# -------------------------
+# Normalization
+# -------------------------
 def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize dataframe column names and types for consistency."""
-    df.columns = [col.strip().lower() for col in df.columns]
+    df.columns = [c.strip().lower() for c in df.columns]
 
-    # If start_time or date column exists, standardize as 'date'
     if "start_time" in df.columns:
-        df["date"] = pd.to_datetime(df["start_time"]).dt.date
+        df["date"] = pd.to_datetime(df["start_time"], errors="coerce").dt.date
     elif "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"]).dt.date
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
 
-    # Add is_proxy if akamai_epd exists
     if "akamai_epd" in df.columns:
         df["is_proxy"] = df["akamai_epd"].notnull().astype(int)
     elif "is_proxy" not in df.columns:
@@ -22,48 +24,70 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# -------------------------
+# Analysis Logic
+# -------------------------
+def run_analysis(df: pd.DataFrame):
+    st.sidebar.header("Detection thresholds / controls")
+
+    burst_threshold = st.sidebar.number_input("Burst threshold (OTPs within 10 min)", value=10, step=1)
+    burst_window_mins = st.sidebar.number_input("Burst window (minutes)", value=10, step=1)
+    bmp_threshold = st.sidebar.number_input("BMP score threshold", value=90, step=1)
+    bmp_times_threshold = st.sidebar.number_input("BMP occurrences/day threshold", value=5, step=1)
+    proxy_repeat_threshold = st.sidebar.number_input("Proxy hits threshold to mark proxy IP", value=1, step=1)
+    device_min_threshold = st.sidebar.number_input("Device requests threshold per minute", value=10, step=1)
+    ip_benchmark_multiplier = st.sidebar.number_input("IP daily benchmark multiplier", value=2.0, step=0.1)
+    date_filter = st.sidebar.date_input("Filter date (optional)", [])
+
+    # -------------------------
+    # Raw data preview
+    # -------------------------
+    st.subheader("Raw data preview (first 10 rows)")
+    st.dataframe(df.head(10), use_container_width=True)
+
+    # your entire existing OTP detection pipeline goes here
+    # (grouped_rolled, anomalies, suspicious_devices, visualizations, downloads, etc.)
+    # just reuse otp_df instead of reloading uploaded_file
+
+    # Example quick stat to confirm it's working
+    st.subheader("Quick stats")
+    st.write(f"Total rows: {len(df)}")
+    if "true_client_ip" in df.columns:
+        st.write(f"Unique IPs: {df['true_client_ip'].nunique()}")
+    st.write(f"Proxy ratio: {df['is_proxy'].mean()*100:.2f}%")
+
+    # At the end, show anomalies, devices, downloads, etc.
+    # (take your long block and indent it inside here, replacing `uploaded_file` with `df`)
+
+
+# -------------------------
+# Main App with Navigation
+# -------------------------
 def main():
     st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
 
-    # -------------------------
-    # Sidebar Navigation
-    # -------------------------
     st.sidebar.title("Navigation")
     page = st.sidebar.radio("Go to", ["Main Dashboard", "Daily Stats"])
 
-    # -------------------------
-    # File upload (only once here)
-    # -------------------------
     if "df" not in st.session_state:
         uploaded_file = st.sidebar.file_uploader(
             "Upload OTP logs CSV",
             type=["csv"],
             help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot"
         )
-
         if uploaded_file:
             df_raw = pd.read_csv(uploaded_file)
             st.session_state.df = normalize_dataframe(df_raw)
             st.success("✅ File uploaded and processed!")
         else:
             st.info("👆 Upload a CSV file to begin.")
-            return  # Stop here until file is uploaded
+            return
 
     df = st.session_state.df
 
-    # -------------------------
-    # Page routing
-    # -------------------------
     if page == "Main Dashboard":
         st.title("🔐 OTP Abuse Detection Dashboard (Main)")
-
-        st.subheader("Raw data preview (first 10 rows)")
-        st.dataframe(df.head(10), use_container_width=True)
-
-        st.subheader("Quick stats")
-        st.write(f"Total rows: {len(df)}")
-        st.write(f"Unique IPs: {df['true_client_ip'].nunique() if 'true_client_ip' in df else 'N/A'}")
-        st.write(f"Proxy ratio: {df['is_proxy'].mean()*100:.2f}%")
+        run_analysis(df)
 
     elif page == "Daily Stats":
         dailystats.show(df)
@@ -71,6 +95,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
