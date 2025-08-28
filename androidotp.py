@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import dailystats
+from utils import dailystats
 import re
 
 st.set_page_config(page_title="OTP Abuse Detection Dashboard", layout="wide")
