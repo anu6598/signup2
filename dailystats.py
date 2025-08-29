@@ -28,7 +28,7 @@ def show(df):
         total_otps = len(group)
 
         # Safe extraction with defaults
-        max_requests_ip = group["true_client_ip"].value_counts().max() if "true_client_ip" in group else 0
+        max_requests_ip = group["x_real_ip"].value_counts().max() if "x_real_ip" in group else 0
         max_requests_device = group["dr_dv"].value_counts().max() if "dr_dv" in group else 0
 
         # if "is_proxy" in group:
