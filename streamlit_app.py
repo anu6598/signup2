@@ -173,11 +173,6 @@ with right_col:
 
 st.markdown("---")
 
-# Sidebar IP filter
-ip_input = st.sidebar.text_input("Enter IP to filter")
-
-if ip_input:
-    df = df[df['true_client_ip'] == ip_input]
 
 # ------------------------------
 # File upload
@@ -245,6 +240,13 @@ daily_signups =  df.groupby(df['date'].dt.date)['request_path'] .count() .reset_
 
 # Display table
 st.dataframe(daily_signups, use_container_width=True)
+
+# Sidebar IP filter
+ip_input = st.sidebar.text_input("Enter IP to filter")
+
+if ip_input:
+    df = df[df['true_client_ip'] == ip_input]
+
 
 # ------------------------------
 # Section 2: Big adaptive time-series scatter (IP on Y, time X, bubble size = count)
