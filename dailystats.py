@@ -41,8 +41,8 @@ def show(df):
             category = "OTP Abuse/Attack detected"
         elif (max_requests_ip > 25) and (total_otps > 1000) and (max_requests_device > 15):
             category = "HIGH OTP request detected"
-        elif proxy_ratio > 70:
-            category = "HIGH proxy status detected"
+        # elif proxy_ratio > 70:
+        #     category = "HIGH proxy status detected"
         else:
             category = "No suspicious activity detected"
 
