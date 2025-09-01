@@ -246,7 +246,7 @@ st.dataframe(daily_signups, use_container_width=True)
 st.header("1 Adaptive Time Series")
 
 # Ensure the dataframe is not empty and has the required columns
-required_cols = ['start_time', 'true_client_ip']
+required_cols = ['start_time', 'x_real_ip']
 for col in required_cols:
     if col not in df.columns:
         st.error(f"Missing column: {col}")
@@ -258,13 +258,13 @@ if not pd.api.types.is_datetime64_any_dtype(df['start_time']):
 
 # Aggregate: count signups per IP per minute
 df_grouped = (
-    df.groupby([pd.Grouper(key='start_time', freq='1min'), 'true_client_ip'])
+    df.groupby([pd.Grouper(key='start_time', freq='1min'), 'x_real_ip'])
       .size()
       .reset_index(name='signup_count')
 )
 
 # Drop rows with NaN IP or time
-df_grouped = df_grouped.dropna(subset=['true_client_ip', 'start_time'])
+df_grouped = df_grouped.dropna(subset=['x_real_ip', 'start_time'])
 
 if df_grouped.empty:
     st.warning("No data available for the Adaptive Time Series chart.")
@@ -274,7 +274,7 @@ else:
         x="start_time",
         y="signup_count",
         size="signup_count",
-        color="true_client_ip",  # Color by IP so we can see clusters
+        color="x_real_ip",  # Color by IP so we can see clusters
         hover_data={
             "start_time": True,
             "signup_count": True,
