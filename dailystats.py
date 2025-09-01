@@ -32,10 +32,10 @@ def show(df):
         max_requests_device = group["dr_dv"].value_counts().max() if "dr_dv" in group else 0
 
         # Normalize and derive is_proxy from akamai_epd
-if 'akamai_epd' in df.columns:
+    if 'akamai_epd' in df.columns:
     epd_norm = df['akamai_epd'].astype(str).str.strip().str.lower()
     df['is_proxy'] = ~epd_norm.isin(['-', 'rp', ''])   # treat NaN/blank as non-proxy
-else:
+    else:
     df['is_proxy'] = False
 
     if 'akamai_epd' in group:
