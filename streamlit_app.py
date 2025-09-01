@@ -235,10 +235,12 @@ df['date'] = pd.to_datetime(df['date'])  # replace 'date' with your column if na
 
 # Group by date and count request_path
 daily_signups = (
-    df.groupby(df['date'].dt.date)['request_path']
+    df[df['request_path'] == '/user/signup']       # filter first
+    .groupby(df['date'].dt.date)['request_path']   # then group by date
     .count()
     .reset_index(name='total_signups')
 )
+
 
 # Display table
 st.dataframe(daily_signups, use_container_width=True)
