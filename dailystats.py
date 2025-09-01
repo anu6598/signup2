@@ -24,6 +24,13 @@ def show(df):
     st.subheader("🚨 Final Daily Categorization")
     final_categories = []
 
+    # Precompute is_proxy once for the whole df
+    if "akamai_epd" in df.columns:
+        epd_norm = df["akamai_epd"].astype(str).str.strip().str.lower()
+        df["is_proxy"] = ~epd_norm.isin(["-", "rp", ""])
+    else:
+        df["is_proxy"] = False
+
     for day, group in df.groupby("date") if "date" in df.columns else []:
         total_otps = len(group)
 
@@ -31,19 +38,8 @@ def show(df):
         max_requests_ip = group["x_real_ip"].value_counts().max() if "x_real_ip" in group else 0
         max_requests_device = group["dr_dv"].value_counts().max() if "dr_dv" in group else 0
 
-        # Normalize and derive is_proxy from akamai_epd
-    if 'akamai_epd' in df.columns:
-    epd_norm = df['akamai_epd'].astype(str).str.strip().str.lower()
-    df['is_proxy'] = ~epd_norm.isin(['-', 'rp', ''])   # treat NaN/blank as non-proxy
-    else:
-    df['is_proxy'] = False
-
-    if 'akamai_epd' in group:
-    epd = group['akamai_epd'].astype(str).str.strip().str.lower()
-    proxy_ratio = (~epd.isin(['-', 'rp', ''])).mean() * 100
-else:
-    proxy_ratio = 0.0
-
+        # proxy ratio per group
+        proxy_ratio = group["is_proxy"].mean() * 100 if "is_proxy" in group else 0.0
 
         # Rule categorization
         if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 70) and (max_requests_device > 15):
@@ -60,7 +56,8 @@ else:
             "category": category,
             "total_otps": total_otps,
             "max_requests_ip": max_requests_ip,
-            "max_requests_device": max_requests_device
+            "max_requests_device": max_requests_device,
+            "proxy_ratio": proxy_ratio
         })
 
     # ✅ Display results
