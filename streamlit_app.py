@@ -234,12 +234,7 @@ st.subheader("📅 Daily Total Signups")
 df['date'] = pd.to_datetime(df['date'])  # replace 'date' with your column if named differently
 
 # Group by date and count request_path
-daily_signups = (
-    df[df['request_path'] == '/user/signup']       # filter first
-    .groupby(df['date'].dt.date)['request_path']   # then group by date
-    .count()
-    .reset_index(name='total_signups')
-)
+daily_signups = ( df.groupby(df['date'].dt.date)['request_path'] .count() .reset_index(name='total_signups')
 
 
 # Display table
