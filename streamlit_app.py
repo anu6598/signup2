@@ -278,7 +278,7 @@ else:
         hover_data={
             "start_time": True,
             "signup_count": True,
-            "true_client_ip": True
+            "x_real_ip": True
         },
         title="Adaptive Time Series: Time vs Signup Count"
     )
