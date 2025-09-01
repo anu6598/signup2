@@ -307,7 +307,7 @@ if not rb_15.empty:
     rb_15['explanation'] = rb_15.apply(lambda r: explain_rule_row(r, '15min_>9'), axis=1)
     st.subheader("Rule: more than 9 signups in 15 minutes")
     st.write("Meaning: These rows show IPs that crossed 9 signups within a 15-minute window — likely a brute-force/signup flood.")
-    st.dataframe(rb_15[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'user_agent', 'explanation']].sort_values('count_15min', ascending=False))
+    st.dataframe(rb_15[['start_time', 'x_real_ip', 'request_path', 'count_15min', 'user_agent', 'explanation']].sort_values('count_15min', ascending=False))
 else:
     st.success("No IPs exceed 9 signups in 15 minutes.")
 
@@ -317,7 +317,7 @@ if not rb_10.empty:
     rb_10['explanation'] = rb_10.apply(lambda r: explain_rule_row(r, '10min_>=5'), axis=1)
     st.subheader("Rule: 5 or more signups in 10 minutes")
     st.write("Meaning: These IPs performed at least 5 signups within 10 minutes — suspicious, worth manual verification.")
-    st.dataframe(rb_10[['start_time', 'true_client_ip', 'request_path', 'count_10min', 'user_agent', 'explanation']].sort_values('count_10min', ascending=False))
+    st.dataframe(rb_10[['start_time', 'x_real_ip', 'request_path', 'count_10min', 'user_agent', 'explanation']].sort_values('count_10min', ascending=False))
 else:
     st.info("No IPs with 5 or more signups in 10 minutes.")
 
@@ -339,7 +339,7 @@ median_10 = max(1.0, df['count_10min'].median())
 if not anomalies_ml.empty:
     anomalies_ml['reason'] = anomalies_ml.apply(lambda r: explain_ml_row(r, median_15, median_10), axis=1)
     st.write("The ML model (Isolation Forest) looks at short-window signup counts per IP and flags statistical outliers. Below are rows flagged by the model along with a short human-readable reason.")
-    st.dataframe(anomalies_ml[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'count_10min', 'user_agent', 'akamai_bot', 'reason']].sort_values(['count_15min','count_10min'], ascending=False))
+    st.dataframe(anomalies_ml[['start_time', 'x_real_ip', 'request_path', 'count_15min', 'count_10min', 'user_agent', 'akamai_bot', 'reason']].sort_values(['count_15min','count_10min'], ascending=False))
 else:
     st.success("Isolation Forest did not detect anomalies in this dataset.")
 
@@ -361,7 +361,7 @@ fig_ml_scatter.add_trace(go.Scatter(
         colorbar=dict(title="Anomaly Score"),
         line=dict(width=0.5, color='black')
     ),
-    text=df['true_client_ip'],
+    text=df['x_real_ip'],
     name='All Points',
     hovertemplate='IP: %{text}<br>15-min Count: %{x}<br>10-min Count: %{y}<br>Score: %{marker.color:.3f}<extra></extra>'
 ))
@@ -398,7 +398,7 @@ from sklearn.neighbors import NearestNeighbors
 import numpy as np
 
 # Safety: drop rows with missing IP for IP-level reasoning
-df_ml = df[~df['true_client_ip'].isna()].copy()
+df_ml = df[~df['x_real_ip'].isna()].copy()
 if df_ml.empty:
     st.info("No IPs available for ML-only explanation table.")
 else:
