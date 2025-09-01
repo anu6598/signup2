@@ -377,7 +377,7 @@ total_rows = len(otp_df)
 unique_ips = otp_df["true_client_ip"].nunique()
 
 # Correct proxy ratio logic
-proxy_mask = (otp_df["akamai_epd"].notna()) & (~otp_df["akamai_epd"].isin(["-", "rp"]))
+proxy_mask = (otp_df["akamai_epd"].notna()) & (~otp_df["akamai_epd"].isin(["-", "rp", ""]))
 proxy_ratio = proxy_mask.mean() * 100
 
 suspicious_ip_count = anomalies[anomalies["reason"] != ""].shape[0]
