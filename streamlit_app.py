@@ -173,6 +173,12 @@ with right_col:
 
 st.markdown("---")
 
+# Sidebar IP filter
+ip_input = st.sidebar.text_input("Enter IP to filter")
+
+if ip_input:
+    df = df[df['true_client_ip'] == ip_input]
+
 # ------------------------------
 # File upload
 # ------------------------------
