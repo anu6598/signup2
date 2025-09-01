@@ -194,10 +194,15 @@ else:
 # optional date column for grouping
 df["date"] = df["timestamp"].dt.date
 
-# filter to only OTP related requests: anything containing 'otp' (case-insensitive)
-df["is_otp"] = df["request_path"].str.contains("otp", case=False, na=False)
-otp_df = df[df["is_otp"]].copy()
-st.write(f"Detected {len(otp_df)} OTP-related rows out of {len(df)} total rows.")
+# Filter rows containing 'otp' or 'login' (case-insensitive)
+df["is_otp_or_login"] = df["request_path"].str.contains("otp|login", case=False, na=False)
+
+# Subset the data
+otp_login_df = df[df["is_otp_or_login"]].copy()
+
+st.write(f"Detected {len(otp_login_df)} OTP/Login-related rows out of {len(df)} total rows.")
+st.dataframe(otp_login_df.head(20))  # show preview
+
 
 if len(otp_df) == 0:
     st.warning("No request_path rows matched 'otp'. Inspect `request_path` values and retry.")
