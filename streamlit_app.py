@@ -242,6 +242,7 @@ daily_signups =  df.groupby(df['date'].dt.date)['request_path'] .count() .reset_
 st.dataframe(daily_signups, use_container_width=True)
 
 # Desc count
+st.subheader("🗻 Total Signups Per IP")
 ip_table = (
     df.groupby("x_real_ip")["request_path"]
     .count()
