@@ -375,7 +375,11 @@ summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
 
 total_rows = len(otp_df)
 unique_ips = otp_df["true_client_ip"].nunique()
-proxy_ratio = otp_df["akamai_epd"].notna().mean() * 100
+
+# Correct proxy ratio logic
+proxy_mask = (otp_df["akamai_epd"].notna()) & (~otp_df["akamai_epd"].isin(["-", "rp"]))
+proxy_ratio = proxy_mask.mean() * 100
+
 suspicious_ip_count = anomalies[anomalies["reason"] != ""].shape[0]
 suspicious_device_count = suspicious_devices["dr_dv"].nunique()
 
@@ -389,6 +393,7 @@ with summary_col4:
     st.metric("Suspicious IPs", suspicious_ip_count)
 
 st.write(f"Suspicious Devices Detected: {suspicious_device_count}")
+
 
 # -------------------------
 # UI: filters & display
