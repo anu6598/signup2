@@ -241,13 +241,24 @@ daily_signups =  df.groupby(df['date'].dt.date)['request_path'] .count() .reset_
 # Display table
 st.dataframe(daily_signups, use_container_width=True)
 
+# Desc count
+ip_table = (
+    df.groupby("x_real_ip")["request_path"]
+    .count()
+    .reset_index(name="request_count")
+    .sort_values("request_count", ascending=False)
+)
+
+
 # Sidebar IP filter
 ip_input = st.sidebar.text_input("Enter IP to filter")
 
 if ip_input:
-    df = df[df['true_client_ip'] == ip_input]
+    df = df[df['x_real_ip'] == ip_input]
 
 
+
+st.dataframe(ip_table)
 # ------------------------------
 # Section 2: Big adaptive time-series scatter (IP on Y, time X, bubble size = count)
 # ------------------------------
