@@ -37,9 +37,9 @@ def show(df):
             proxy_ratio = 0  # default when column missing
 
         # Rule categorization
-        if (total_otps > 1000) or (max_requests_ip > 25) or (proxy_ratio > 70) or (max_requests_device > 15):
+        if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 70) and (max_requests_device > 15):
             category = "OTP Abuse/Attack detected"
-        elif (max_requests_ip > 25) or (total_otps > 1000) or (max_requests_device > 15):
+        elif (max_requests_ip > 25) and (total_otps > 1000) and (max_requests_device > 15):
             category = "HIGH OTP request detected"
         elif proxy_ratio > 70:
             category = "HIGH proxy status detected"
