@@ -239,7 +239,7 @@ daily_signups =  df.groupby(df['date'].dt.date)['request_path'] .count() .reset_
 
 
 # Display table
-st.dataframe(daily_signups, use_container_width="stretch")
+st.dataframe(daily_signups, use_container_width=True)
 
 # Desc count
 st.subheader("🗻 Total Signups Per IP")
@@ -310,7 +310,7 @@ else:
         height=600
     )
 
-    st.plotly_chart(fig, use_container_width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ------------------------------
@@ -402,7 +402,7 @@ fig_ml_scatter.update_layout(
     height=450
 )
 
-st.plotly_chart(fig_ml_scatter, use_container_width="stretch")
+st.plotly_chart(fig_ml_scatter, use_container_width=True)
 
 # Show model parameters & contamination info
 st.caption(f"IsolationForest trained with contamination={iso.contamination}, random_state=42. "
@@ -624,6 +624,6 @@ for i in range(0, len(indicators), cols_per_row):
                 mask = pd.Series([True]*len(df), index=df.index)
 
             fig = make_hour_minute_second_plot(df, title, filt_mask=mask)
-            st.plotly_chart(fig, use_container_width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
 
 
