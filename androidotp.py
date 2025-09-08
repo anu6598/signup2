@@ -241,36 +241,57 @@ otp_login_df["minute_bucket"] = otp_login_df["timestamp"].dt.floor("T")
 
 grouped = (
     otp_login_df.groupby(["true_client_ip", "minute_bucket"], as_index=False)
-    .agg(signup_attempts=("request_path", "count"),
-         akamai_epd=("akamai_epd", lambda s: s.dropna().iloc[0] if s.dropna().shape[0] > 0 else np.nan))
+    .agg(
+        signup_attempts=("request_path", "count"),
+        akamai_epd=("akamai_epd", lambda s: s.dropna().iloc[0] if s.dropna().shape[0] > 0 else np.nan)
+    )
     .sort_values(["true_client_ip", "minute_bucket"])
 )
 
 # compute rolling sum attempts_in_10_min per IP using time-based rolling on DatetimeIndex
 def compute_rolling_attempts(g, window_minutes=int(burst_window_mins)):
     g = g.set_index("minute_bucket").sort_index()
-    # rolling with time window, centers on right by default (includes current row)
     g["attempts_in_10_min"] = g["signup_attempts"].rolling(f"{window_minutes}T").sum()
     g = g.reset_index()
     return g
 
 grouped_rolled = grouped.groupby("true_client_ip", group_keys=False).apply(compute_rolling_attempts).reset_index(drop=True)
 
-# add is_proxy_ip flag (if akamai_epd present for that IP ever)
-proxy_by_ip = otp_login_df.groupby("true_client_ip")["akamai_epd"].apply(lambda s: s.notna().any()).rename("is_proxy_ip")
+# -------------------------
+# ✅ New proxy logic
+# -------------------------
+def is_proxy_ip(series):
+    epd_norm = series.astype(str).str.strip().str.lower()
+    return (~epd_norm.isin(["-", "rp", ""])).any()
+
+proxy_by_ip = otp_login_df.groupby("true_client_ip")["akamai_epd"].apply(is_proxy_ip).rename("is_proxy_ip")
 grouped_rolled = grouped_rolled.join(proxy_by_ip, on="true_client_ip")
 
-# attack candidates: attempts exceed burst_threshold OR is proxy ip (and proxy hits > proxy_repeat_threshold)
-proxy_hits = otp_login_df[otp_login_df["akamai_epd"].notna()].groupby("true_client_ip").size().rename("proxy_hits")
+# proxy_hits = number of rows for that IP that are proxy
+proxy_hits = (
+    otp_login_df.assign(
+        is_proxy_row=~otp_login_df["akamai_epd"].astype(str).str.strip().str.lower().isin(["-", "rp", ""])
+    )
+    .groupby("true_client_ip")["is_proxy_row"].sum()
+    .rename("proxy_hits")
+)
 grouped_rolled = grouped_rolled.join(proxy_hits, on="true_client_ip")
+
 grouped_rolled["proxy_hits"] = grouped_rolled["proxy_hits"].fillna(0).astype(int)
 grouped_rolled["is_proxy_ip"] = grouped_rolled["is_proxy_ip"].fillna(False)
+
 # Mark candidate only when attempts_in_10_min > burst_threshold OR (is proxy and proxy_hits>proxy_repeat_threshold)
-grouped_rolled["attack_candidate"] = ((grouped_rolled["attempts_in_10_min"] > burst_threshold) | 
-                                     ((grouped_rolled["is_proxy_ip"]) & (grouped_rolled["proxy_hits"] > proxy_repeat_threshold)))
+grouped_rolled["attack_candidate"] = (
+    (grouped_rolled["attempts_in_10_min"] > burst_threshold) |
+    ((grouped_rolled["is_proxy_ip"]) & (grouped_rolled["proxy_hits"] > proxy_repeat_threshold))
+)
 
 # only keep rows with more than 1 instance? The user asked "more than 1 instance - filter these in a new table minute bucket table"
 minute_bucket_table = grouped_rolled.copy()
+
+
+
+
 
 # -------------------------
 # IP Age & repetition count
