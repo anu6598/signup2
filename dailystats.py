@@ -42,11 +42,11 @@ def show(df):
         proxy_ratio = group["is_proxy"].mean() * 100 if "is_proxy" in group else 0.0
 
         # Rule categorization
-        if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 70) and (max_requests_device > 15):
+        if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 20) and (max_requests_device > 15):
             category = "OTP Abuse/Attack detected"
         elif (max_requests_ip > 25) and (total_otps > 1000) and (max_requests_device > 15):
             category = "HIGH OTP request detected"
-        elif proxy_ratio > 70:
+        elif proxy_ratio > 20:
             category = "HIGH proxy status detected"
         else:
             category = "No suspicious activity detected"
