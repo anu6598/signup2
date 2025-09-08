@@ -87,7 +87,7 @@ if page == "Main Dashboard":
         st.subheader("Quick stats")
         st.write(f"Total rows: {len(st.session_state.df)}")
         st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
-        st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
+        # st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
     else:
         st.info("👆 Upload a CSV file to begin.")
 
