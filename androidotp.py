@@ -362,10 +362,10 @@ suspicious_ips_by_burst = grouped_rolled[grouped_rolled["attack_candidate"]].gro
 # -------------------------
 # Combine flags into anomalies table (one row per ip + reason columns)
 # -------------------------
-anomalies = ip_stats[["true_client_ip","days_seen","first_seen","last_seen","total_requests","above_benchmark"]].copy()
-anomalies = anomalies.merge(suspicious_ips_by_burst[["true_client_ip","max_attempts","proxy_hits"]], on="true_client_ip", how="left")
-anomalies = anomalies.merge(bmp_flagged.groupby("true_client_ip")["bmp_high_count"].sum().reset_index().rename(columns={"bmp_high_count":"bmp_high_days_sum"}), on="true_client_ip", how="left")
-anomalies = anomalies.merge(proxy_daily.groupby("true_client_ip")["proxy_count"].sum().reset_index().rename(columns={"proxy_count":"total_proxy_hits"}), on="true_client_ip", how="left")
+anomalies = ip_stats[["x_real_ip","days_seen","first_seen","last_seen","total_requests","above_benchmark"]].copy()
+anomalies = anomalies.merge(suspicious_ips_by_burst[["x_real_ip","max_attempts","proxy_hits"]], on="x_real_ip", how="left")
+anomalies = anomalies.merge(bmp_flagged.groupby("x_real_ip")["bmp_high_count"].sum().reset_index().rename(columns={"bmp_high_count":"bmp_high_days_sum"}), on="x_real_ip", how="left")
+anomalies = anomalies.merge(proxy_daily.groupby("x_real_ip")["proxy_count"].sum().reset_index().rename(columns={"proxy_count":"total_proxy_hits"}), on="x_real_ip", how="left")
 anomalies["suspicious_by_burst"] = anomalies["max_attempts"].fillna(0) > burst_threshold
 anomalies["suspicious_by_bmp"] = anomalies["bmp_high_days_sum"].fillna(0) > 0
 anomalies["suspicious_by_proxy_spike"] = anomalies["true_client_ip"].isin(spike_ips["true_client_ip"].unique())
