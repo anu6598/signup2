@@ -26,11 +26,11 @@ def normalize_dataframe(df_raw):
                 return p
         return None
 
-    col_ip = pick_col(["true_client_ip", "client_ip", "ip", "remote_addr"])
+    col_ip = pick_col(["x_real_ip", "client_ip", "ip", "remote_addr"])
     col_device = pick_col(["dr_dv", "device_id", "device"])
     col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
 
-    df["true_client_ip"] = df[col_ip].astype(str) if col_ip else "unknown"
+    df["x_real_ip"] = df[col_ip].astype(str) if col_ip else "unknown"
     df["dr_dv"] = df[col_device].astype(str) if col_device else np.nan
     df["akamai_epd"] = df[col_akamai_epd] if col_akamai_epd else np.nan
     df["is_proxy"] = df["akamai_epd"].notna() & (df["akamai_epd"] != "")
@@ -56,7 +56,7 @@ def collapse_ip(ip, mask_octets=1):
 def ip_quality(df):
     """Compute IP quality metrics: age, usage, avg requests/day."""
     stats = (
-        df.groupby("true_client_ip")
+        df.groupby("x_real_ip")
         .agg(
             days_seen=("date", "nunique"),
             first_seen=("timestamp", "min"),
@@ -86,7 +86,7 @@ if page == "Main Dashboard":
 
         st.subheader("Quick stats")
         st.write(f"Total rows: {len(st.session_state.df)}")
-        st.write(f"Unique IPs: {st.session_state.df['true_client_ip'].nunique()}")
+        st.write(f"Unique IPs: {st.session_state.df['x_real_ip'].nunique()}")
         # st.write(f"Proxy ratio: {st.session_state.df['is_proxy'].mean()*100:.2f}%")
     else:
         st.info("👆 Upload a CSV file to begin.")
@@ -114,7 +114,7 @@ st.sidebar.markdown("---")
 # -------------------------
 # File upload
 # -------------------------
-uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, true_client_ip, dr_dv, akamai_epd, akamai_bot")
+uploaded_file = st.file_uploader("Upload OTP logs CSV", type=["csv"], help="Must contain (or close variants of): start_time/date, request_path, x_real_ip, dr_dv, akamai_epd, akamai_bot")
 
 if not uploaded_file:
     st.info("Upload a CSV file to begin. The app will try to automatically detect columns and run all rules.")
@@ -144,7 +144,7 @@ def pick_col(possible):
 col_start_time = pick_col(["start_time", "timestamp", "time", "created_on"])
 col_date = pick_col(["date"])
 col_request_path = pick_col(["request_path", "path", "request"])
-col_ip = pick_col(["true_client_ip", "client_ip", "ip", "remote_addr"])
+col_ip = pick_col(["x_real_ip", "client_ip", "ip", "remote_addr"])
 col_device = pick_col(["dr_dv", "device_id", "dr_dv_id", "device"])
 col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
 col_akamai_bot = pick_col(["akamai_bot", "akamaibot", "bot_info", "bmp", "akamai_bmp"])
@@ -155,7 +155,7 @@ if not col_start_time:
 if not col_request_path:
     missing.append("request_path")
 if not col_ip:
-    missing.append("true_client_ip")
+    missing.append("x_real_ip")
 if missing:
     st.error(f"Missing required columns: {', '.join(missing)}. Please upload file with these columns (or similar names).")
     st.stop()
@@ -177,7 +177,7 @@ df = df.sort_values("timestamp")
 
 # normalize other columns existence
 df["request_path"] = df[col_request_path].astype(str) if col_request_path else ""
-df["true_client_ip"] = df[col_ip].astype(str)
+df["x_real_ip"] = df[col_ip].astype(str)
 if col_device:
     df["dr_dv"] = df[col_device].astype(str)
 else:
@@ -240,12 +240,12 @@ otp_login_df["bmp_score"] = otp_login_df["akamai_bot"].apply(extract_digits)
 otp_login_df["minute_bucket"] = otp_login_df["timestamp"].dt.floor("T")
 
 grouped = (
-    otp_login_df.groupby(["true_client_ip", "minute_bucket"], as_index=False)
+    otp_login_df.groupby(["x_real_ip", "minute_bucket"], as_index=False)
     .agg(
         login_attempts=("request_path", "count"),
         akamai_epd=("akamai_epd", lambda s: s.dropna().iloc[0] if s.dropna().shape[0] > 0 else np.nan)
     )
-    .sort_values(["true_client_ip", "minute_bucket"])
+    .sort_values(["x_real_ip", "minute_bucket"])
 )
 
 # compute rolling sum attempts_in_10_min per IP using time-based rolling on DatetimeIndex
@@ -255,7 +255,7 @@ def compute_rolling_attempts(g, window_minutes=int(burst_window_mins)):
     g = g.reset_index()
     return g
 
-grouped_rolled = grouped.groupby("true_client_ip", group_keys=False).apply(compute_rolling_attempts).reset_index(drop=True)
+grouped_rolled = grouped.groupby("x_real_ip", group_keys=False).apply(compute_rolling_attempts).reset_index(drop=True)
 
 # -------------------------
 # ✅ New proxy logic
@@ -264,18 +264,18 @@ def is_proxy_ip(series):
     epd_norm = series.astype(str).str.strip().str.lower()
     return (~epd_norm.isin(["-", "rp", ""])).any()
 
-proxy_by_ip = otp_login_df.groupby("true_client_ip")["akamai_epd"].apply(is_proxy_ip).rename("is_proxy_ip")
-grouped_rolled = grouped_rolled.join(proxy_by_ip, on="true_client_ip")
+proxy_by_ip = otp_login_df.groupby("x_real_ip")["akamai_epd"].apply(is_proxy_ip).rename("is_proxy_ip")
+grouped_rolled = grouped_rolled.join(proxy_by_ip, on="x_real_ip")
 
 # proxy_hits = number of rows for that IP that are proxy
 proxy_hits = (
     otp_login_df.assign(
         is_proxy_row=~otp_login_df["akamai_epd"].astype(str).str.strip().str.lower().isin(["-", "rp", ""])
     )
-    .groupby("true_client_ip")["is_proxy_row"].sum()
+    .groupby("x_real_ip")["is_proxy_row"].sum()
     .rename("proxy_hits")
 )
-grouped_rolled = grouped_rolled.join(proxy_hits, on="true_client_ip")
+grouped_rolled = grouped_rolled.join(proxy_hits, on="x_real_ip")
 
 grouped_rolled["proxy_hits"] = grouped_rolled["proxy_hits"].fillna(0).astype(int)
 grouped_rolled["is_proxy_ip"] = grouped_rolled["is_proxy_ip"].fillna(False)
@@ -297,7 +297,7 @@ minute_bucket_table = grouped_rolled.copy()
 # IP Age & repetition count
 # -------------------------
 ip_stats = (
-    otp_login_df.groupby("true_client_ip")
+    otp_login_df.groupby("x_real_ip")
     .agg(days_seen=("date", lambda s: s.nunique()),
          first_seen=("timestamp", "min"),
          last_seen=("timestamp", "max"),
@@ -305,10 +305,10 @@ ip_stats = (
     .reset_index()
 )
 # Benchmark for repetitions on a normal day:
-ip_daily = otp_login_df.groupby(["true_client_ip", "date"]).size().reset_index(name="daily_requests")
+ip_daily = otp_login_df.groupby(["x_real_ip", "date"]).size().reset_index(name="daily_requests")
 # compute per-IP baseline mean daily requests
-ip_baseline = ip_daily.groupby("true_client_ip")["daily_requests"].agg(["mean", "median", "std"]).reset_index().rename(columns={"mean":"daily_mean","median":"daily_median","std":"daily_std"})
-ip_stats = ip_stats.merge(ip_baseline, on="true_client_ip", how="left")
+ip_baseline = ip_daily.groupby("x_real_ip")["daily_requests"].agg(["mean", "median", "std"]).reset_index().rename(columns={"mean":"daily_mean","median":"daily_median","std":"daily_std"})
+ip_stats = ip_stats.merge(ip_baseline, on="x_real_ip", how="left")
 # flag IPs above baseline*multiplier
 ip_stats["above_benchmark"] = ip_stats["total_requests"] > (ip_stats["daily_mean"].fillna(0) * ip_benchmark_multiplier)
 
@@ -331,7 +331,7 @@ spike_ips = proxy_daily[proxy_daily["proxy_spike"]]
 # -------------------------
 # BMP rules: BMP > bmp_threshold and seen >= bmp_times_threshold times in a day
 # -------------------------
-bmp_daily = otp_login_df[otp_login_df["bmp_score"].notna()].groupby(["true_client_ip", "date"])["bmp_score"].apply(lambda s: (s > bmp_threshold).sum()).reset_index(name="bmp_high_count")
+bmp_daily = otp_login_df[otp_login_df["bmp_score"].notna()].groupby(["x_real_ip", "date"])["bmp_score"].apply(lambda s: (s > bmp_threshold).sum()).reset_index(name="bmp_high_count")
 bmp_flagged = bmp_daily[bmp_daily["bmp_high_count"] >= bmp_times_threshold]
 
 # -------------------------
@@ -340,7 +340,7 @@ bmp_flagged = bmp_daily[bmp_daily["bmp_high_count"] >= bmp_times_threshold]
 otp_login_df.set_index("timestamp", inplace=False)  # don't permanently set
 rates = {}
 for label, rule in [("Per Minute", "1T"), ("Per 10 Minutes", f"{burst_window_mins}T"), ("Per Hour", "1H"), ("Per Day", "1D")]:
-    series = otp_login_df.set_index("timestamp").resample(rule)["true_client_ip"].count().rename("requests").reset_index()
+    series = otp_login_df.set_index("timestamp").resample(rule)["x_real_ip"].count().rename("requests").reset_index()
     rates[label] = series
 
 # -------------------------
@@ -356,8 +356,8 @@ else:
 # -------------------------
 # Suspicious IPs (simple summary counts)
 # -------------------------
-ip_request_counts = otp_login_df.groupby("true_client_ip").size().reset_index(name="total_requests")
-suspicious_ips_by_burst = grouped_rolled[grouped_rolled["attack_candidate"]].groupby("true_client_ip").agg(first_seen=("minute_bucket", "min"), max_attempts=("attempts_in_10_min", "max"), proxy_hits=("proxy_hits", "max")).reset_index().sort_values("max_attempts", ascending=False)
+ip_request_counts = otp_login_df.groupby("x_real_ip").size().reset_index(name="total_requests")
+suspicious_ips_by_burst = grouped_rolled[grouped_rolled["attack_candidate"]].groupby("x_real_ip").agg(first_seen=("minute_bucket", "min"), max_attempts=("attempts_in_10_min", "max"), proxy_hits=("proxy_hits", "max")).reset_index().sort_values("max_attempts", ascending=False)
 
 # -------------------------
 # Combine flags into anomalies table (one row per ip + reason columns)
@@ -368,8 +368,8 @@ anomalies = anomalies.merge(bmp_flagged.groupby("x_real_ip")["bmp_high_count"].s
 anomalies = anomalies.merge(proxy_daily.groupby("x_real_ip")["proxy_count"].sum().reset_index().rename(columns={"proxy_count":"total_proxy_hits"}), on="x_real_ip", how="left")
 anomalies["suspicious_by_burst"] = anomalies["max_attempts"].fillna(0) > burst_threshold
 anomalies["suspicious_by_bmp"] = anomalies["bmp_high_days_sum"].fillna(0) > 0
-anomalies["suspicious_by_proxy_spike"] = anomalies["true_client_ip"].isin(spike_ips["true_client_ip"].unique())
-anomalies["suspicious_by_device"] = anomalies["true_client_ip"].isin(suspicious_devices["dr_dv"].unique())  # approximate mapping might be empty
+anomalies["suspicious_by_proxy_spike"] = anomalies["x_real_ip"].isin(spike_ips["x_real_ip"].unique())
+anomalies["suspicious_by_device"] = anomalies["x_real_ip"].isin(suspicious_devices["dr_dv"].unique())  # approximate mapping might be empty
 anomalies["reason"] = anomalies.apply(lambda r: ", ".join(
     [x for x, flag in [
         ("burst", r["suspicious_by_burst"]),
@@ -380,8 +380,8 @@ anomalies["reason"] = anomalies.apply(lambda r: ", ".join(
 # -------------------------
 # Regex-based IP collapse (grouping by ranges)
 # -------------------------
-otp_login_df["ip_mask_1"] = otp_login_df["true_client_ip"].apply(lambda x: collapse_ip(x, 1))
-otp_login_df["ip_mask_2"] = otp_login_df["true_client_ip"].apply(lambda x: collapse_ip(x, 2))
+otp_login_df["ip_mask_1"] = otp_login_df["x_real_ip"].apply(lambda x: collapse_ip(x, 1))
+otp_login_df["ip_mask_2"] = otp_login_df["x_real_ip"].apply(lambda x: collapse_ip(x, 2))
 
 masked_ip_counts = (
     otp_login_df.groupby("ip_mask_1").size().reset_index(name="request_count")
@@ -405,7 +405,7 @@ st.subheader("📊 Overall Summary")
 summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
 
 total_rows = len(otp_login_df)
-unique_ips = otp_login_df["true_client_ip"].nunique()
+unique_ips = otp_login_df["x_real_ip"].nunique()
 
 # Correct proxy ratio logic
 proxy_mask = (otp_login_df["akamai_epd"].notna()) & (~otp_login_df["akamai_epd"].isin(["-", "rp", ""]))
@@ -441,7 +441,7 @@ with col3:
 # filtered anomalies for display
 display_anomalies = anomalies.copy()
 if ip_filter:
-    display_anomalies = display_anomalies[display_anomalies["true_client_ip"].str.contains(ip_filter)]
+    display_anomalies = display_anomalies[display_anomalies["x_real_ip"].str.contains(ip_filter)]
 if min_requests_filter > 0:
     display_anomalies = display_anomalies[display_anomalies["total_requests"] >= min_requests_filter]
 
@@ -465,15 +465,15 @@ st.markdown("**OTP requests over time (per minute)**")
 st.line_chart(rates["Per Minute"].set_index("timestamp")["requests"])
 
 # bursty IPs over time (top 10 by max_attempts)
-top_bursty_ips = suspicious_ips_by_burst["true_client_ip"].head(10).tolist()
+top_bursty_ips = suspicious_ips_by_burst["x_real_ip"].head(10).tolist()
 if top_bursty_ips:
     st.markdown("**Top bursty IPs (by attempts in 10min) timeline**")
-    mask = otp_login_df["true_client_ip"].isin(top_bursty_ips)
-    per_min_top = otp_login_df[mask].groupby([pd.Grouper(key="timestamp", freq="1T"), "true_client_ip"]).size().reset_index(name="requests")
+    mask = otp_login_df["x_real_ip"].isin(top_bursty_ips)
+    per_min_top = otp_login_df[mask].groupby([pd.Grouper(key="timestamp", freq="1T"), "x_real_ip"]).size().reset_index(name="requests")
     fig = None
     try:
         import plotly.express as px
-        fig = px.line(per_min_top, x="timestamp", y="requests", color="true_client_ip", title="Top bursty IPs timeline")
+        fig = px.line(per_min_top, x="timestamp", y="requests", color="x_real_ip", title="Top bursty IPs timeline")
         st.plotly_chart(fig, use_container_width=True)
     except Exception:
         st.dataframe(per_min_top.head())
@@ -518,19 +518,19 @@ st.dataframe(device_time_buckets.sort_values("requests_per_min", ascending=False
 
 # Per IP address
 ip_time_buckets = (
-    otp_login_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="1T")])
+    otp_login_df.groupby(["x_real_ip", pd.Grouper(key="timestamp", freq="1T")])
     .size().reset_index(name="requests_per_min")
 )
 ip_time_buckets["requests_10min"] = (
-    otp_login_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="10T")])
+    otp_login_df.groupby(["x_real_ip", pd.Grouper(key="timestamp", freq="10T")])
     .size().reset_index(name="requests")["requests"].reindex(ip_time_buckets.index).fillna(0).astype(int)
 )
 ip_time_buckets["requests_1h"] = (
-    otp_login_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="1H")])
+    otp_login_df.groupby(["x_real_ip", pd.Grouper(key="timestamp", freq="1H")])
     .size().reset_index(name="requests")["requests"].reindex(ip_time_buckets.index).fillna(0).astype(int)
 )
 ip_time_buckets["requests_1d"] = (
-    otp_login_df.groupby(["true_client_ip", pd.Grouper(key="timestamp", freq="1D")])
+    otp_login_df.groupby(["x_real_ip", pd.Grouper(key="timestamp", freq="1D")])
     .size().reset_index(name="requests")["requests"].reindex(ip_time_buckets.index).fillna(0).astype(int)
 )
 
