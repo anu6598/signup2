@@ -251,7 +251,7 @@ grouped = (
 # compute rolling sum attempts_in_10_min per IP using time-based rolling on DatetimeIndex
 def compute_rolling_attempts(g, window_minutes=int(burst_window_mins)):
     g = g.set_index("minute_bucket").sort_index()
-    g["attempts_in_10_min"] = g["signup_attempts"].rolling(f"{window_minutes}T").sum()
+    g["attempts_in_10_min"] = g["login_attempts"].rolling(f"{window_minutes}T").sum()
     g = g.reset_index()
     return g
 
