@@ -324,9 +324,9 @@ proxy_daily = (
 
 # compute per-IP stats and flag spikes
 #proxy_stats = proxy_daily.groupby("true_client_ip")["proxy_count"].agg(["mean", "std"]).reset_index().rename(columns={"mean":"proxy_mean","std":"proxy_std"})
-proxy_daily = proxy_daily.merge(proxy_stats, on="true_client_ip", how="left")
-proxy_daily["proxy_spike"] = proxy_daily.apply(lambda r: (r["proxy_count"] > (r["proxy_mean"] + 3*(r["proxy_std"] if not np.isnan(r["proxy_std"]) else 0))) if not np.isnan(r["proxy_mean"]) else False, axis=1)
-spike_ips = proxy_daily[proxy_daily["proxy_spike"]]
+# proxy_daily = proxy_daily.merge(proxy_stats, on="true_client_ip", how="left")
+# proxy_daily["proxy_spike"] = proxy_daily.apply(lambda r: (r["proxy_count"] > (r["proxy_mean"] + 3*(r["proxy_std"] if not np.isnan(r["proxy_std"]) else 0))) if not np.isnan(r["proxy_mean"]) else False, axis=1)
+# spike_ips = proxy_daily[proxy_daily["proxy_spike"]]
 
 # -------------------------
 # BMP rules: BMP > bmp_threshold and seen >= bmp_times_threshold times in a day
