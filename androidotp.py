@@ -242,7 +242,7 @@ otp_login_df["minute_bucket"] = otp_login_df["timestamp"].dt.floor("T")
 grouped = (
     otp_login_df.groupby(["true_client_ip", "minute_bucket"], as_index=False)
     .agg(
-        signup_attempts=("request_path", "count"),
+        login_attempts=("request_path", "count"),
         akamai_epd=("akamai_epd", lambda s: s.dropna().iloc[0] if s.dropna().shape[0] > 0 else np.nan)
     )
     .sort_values(["true_client_ip", "minute_bucket"])
