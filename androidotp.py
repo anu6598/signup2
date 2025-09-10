@@ -267,14 +267,20 @@ def is_proxy_ip(series):
 proxy_by_ip = otp_login_df.groupby("x_real_ip")["akamai_epd"].apply(is_proxy_ip).rename("is_proxy_ip")
 grouped_rolled = grouped_rolled.join(proxy_by_ip, on="x_real_ip")
 
-# proxy_hits = number of rows for that IP that are proxy
 proxy_hits = (
     otp_login_df.assign(
-        is_proxy_row=~otp_login_df["akamai_epd"].astype(str).str.strip().str.lower().isin(["-", "rp", ""])
+        is_proxy_row=~otp_login_df["akamai_epd"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin(["-", "rp", ""])
     )
-    .groupby("x_real_ip")["is_proxy_row"].sum()
+    .groupby("x_real_ip")["is_proxy_row"]
+    .any()  # True if at least one proxy row exists
+    .astype(int)  # convert True/False -> 1/0
     .rename("proxy_hits")
 )
+
 grouped_rolled = grouped_rolled.join(proxy_hits, on="x_real_ip")
 
 grouped_rolled["proxy_hits"] = grouped_rolled["proxy_hits"].fillna(0).astype(int)
