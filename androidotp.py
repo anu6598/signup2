@@ -316,7 +316,12 @@ ip_stats["above_benchmark"] = ip_stats["total_requests"] > (ip_stats["daily_mean
 # Spike detection in akamai_epd for certain IPs
 # detect when an IP's daily proxy_count is >> its normal (mean+3*std)
 # -------------------------
-proxy_daily = otp_login_df.groupby(["true_client_ip", "date"])["akamai_epd"].apply(lambda s: s.notna().sum()).reset_index(name="proxy_count")
+proxy_daily = (
+    otp_login_df.groupby(["x_real_ip", "date"])["akamai_epd"]
+    .apply(lambda s: s[~s.isin(["-", "rp", ""])].count())
+    .reset_index(name="proxy_count")
+)
+
 # compute per-IP stats and flag spikes
 proxy_stats = proxy_daily.groupby("true_client_ip")["proxy_count"].agg(["mean", "std"]).reset_index().rename(columns={"mean":"proxy_mean","std":"proxy_std"})
 proxy_daily = proxy_daily.merge(proxy_stats, on="true_client_ip", how="left")
