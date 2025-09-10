@@ -354,10 +354,10 @@ for label, rule in [("Per Minute", "1T"), ("Per 10 Minutes", f"{burst_window_min
 # Suspicious device behavior (counts per device)
 # -------------------------
 if "dr_dv" in otp_login_df.columns:
-    device_per_min = otp_login_df.groupby(["dr_dv", "x_real_ip","minute_bucket"]).size().reset_index(name="requests_per_min")
+    device_per_min = otp_login_df.groupby(["dr_dv","minute_bucket"]).size().reset_index(name="requests_per_min")
     suspicious_devices = device_per_min[device_per_min["requests_per_min"] >= device_min_threshold]
 else:
-    device_per_min = pd.DataFrame(columns=["dr_dv", "x_real_ip", "minute_bucket", "requests_per_min"])
+    device_per_min = pd.DataFrame(columns=["dr_dv", "minute_bucket", "requests_per_min"])
     suspicious_devices = device_per_min
 
 # -------------------------
