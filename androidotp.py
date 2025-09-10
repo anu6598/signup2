@@ -318,9 +318,10 @@ ip_stats["above_benchmark"] = ip_stats["total_requests"] > (ip_stats["daily_mean
 # -------------------------
 proxy_daily = (
     otp_login_df.groupby(["x_real_ip", "date"])["akamai_epd"]
-    .apply(lambda s: s[~s.isin(["-", "rp", ""])].count())
-    .reset_index(name="proxy_count")
+    .apply(lambda s: int((~s.isin(["-", "rp", ""])).any()))
+    .reset_index(name="proxy_flag")
 )
+
 
 # compute per-IP stats and flag spikes
 proxy_stats = proxy_daily.groupby("x_real_ip")["proxy_count"].agg(["mean", "std"]).reset_index().rename(columns={"mean":"proxy_mean","std":"proxy_std"})
