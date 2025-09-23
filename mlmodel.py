@@ -4,9 +4,9 @@ import numpy as np
 import re
 from datetime import timedelta
 from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 from PIL import Image
-import pmdarima as pm  # alternative for ARIMA
 
 # ------------------ CONFIG ------------------
 RANDOM_SEED = 42
@@ -84,7 +84,7 @@ Upload your attack-day logs CSV to analyze suspicious IPs based on:
 - Proxy presence  
 - BMP score  
 - IsolationForest anomaly
-- Forecasting suspicious login attempts  
+- Forecasting suspicious login attempts (Linear Regression)  
 """)
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
@@ -200,23 +200,29 @@ if uploaded_file:
     ).reset_index().rename(columns={"ts":"date"})
     st.dataframe(daily_summary)
 
-    # ---------- DAILY LOGINS + 7-DAY FORECAST USING PMDARIMA ----------
-    st.subheader("📊 Daily Login Count & 7-Day Forecast")
+    # ---------- DAILY LOGINS + 7-DAY FORECAST USING LINEAR REGRESSION ----------
+    st.subheader("📊 Daily Login Count & 7-Day Forecast (Linear Regression)")
     daily_logins = df.groupby(df["ts"].dt.date).size().rename("login_count")
     daily_logins = daily_logins.sort_index()
     st.line_chart(daily_logins)
 
     if len(daily_logins) >= 3:
-        # Fit ARIMA automatically
-        arima_model = pm.auto_arima(daily_logins, seasonal=False, suppress_warnings=True)
-        forecast_7d = arima_model.predict(n_periods=7)
+        # Prepare data for Linear Regression
+        X = np.arange(len(daily_logins)).reshape(-1,1)
+        y = daily_logins.values
+        lr_model = LinearRegression()
+        lr_model.fit(X, y)
+
+        # Forecast next 7 days
+        future_X = np.arange(len(daily_logins), len(daily_logins)+7).reshape(-1,1)
+        forecast_7d = lr_model.predict(future_X)
         future_dates = pd.date_range(daily_logins.index[-1] + pd.Timedelta(days=1), periods=7)
-        forecast_7d = pd.Series(forecast_7d, index=future_dates)
+        forecast_series = pd.Series(forecast_7d, index=future_dates)
 
         # Plot
         fig, ax = plt.subplots(figsize=(10,5))
         ax.plot(daily_logins.index, daily_logins.values, label="Historical", marker='o')
-        ax.plot(forecast_7d.index, forecast_7d.values, label="7-Day Forecast", linestyle='--', marker='o')
+        ax.plot(forecast_series.index, forecast_series.values, label="7-Day Forecast", linestyle='--', marker='o')
         ax.set_xlabel("Date")
         ax.set_ylabel("Number of Logins")
         ax.legend()
@@ -224,7 +230,7 @@ if uploaded_file:
         st.pyplot(fig)
 
         st.subheader("Forecasted Logins (Next 7 Days)")
-        st.dataframe(forecast_7d.rename("forecasted_logins"))
+        st.dataframe(forecast_series.rename("forecasted_logins"))
     else:
         st.info("Need at least 3 days of data for forecast demo.")
 
