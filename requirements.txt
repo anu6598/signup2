@@ -13,4 +13,6 @@ numpy
 matplotlib
 seaborn
 scipy
-arima
+statsmodels
+pmdarima
+
