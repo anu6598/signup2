@@ -4,7 +4,7 @@ import numpy as np
 import re
 from datetime import timedelta
 from sklearn.ensemble import IsolationForest
-from statsmodels.tsa.arima.model import ARIMA  # NEW
+from statsmodels.tsa.arima.model import ARIMA
 import matplotlib.pyplot as plt
 from PIL import Image
 
@@ -200,29 +200,33 @@ if uploaded_file:
     ).reset_index().rename(columns={"ts":"date"})
     st.dataframe(daily_summary)
 
-    # ---------- FORECAST ----------
-    st.subheader("📈 Attack Forecast (Demo)")
-    # suspicious = total suspicious attempts/day
-    suspicious_daily = ip_agg[ip_agg["final_label"]=="suspicious"].groupby(
-        ip_agg["ip_addr"].map(lambda x: df[df["ip_addr"]==x]["ts"].dt.date.min())
-    ).size()
+    # ---------- DAILY LOGINS + 7-DAY FORECAST ----------
+    st.subheader("📊 Daily Login Count & 7-Day Forecast")
 
-    if len(suspicious_daily) >= 3:  # need at least 3 points
-        suspicious_daily = suspicious_daily.sort_index()
-        model = ARIMA(suspicious_daily, order=(1,1,0))
+    daily_logins = df.groupby(df["ts"].dt.date).size().rename("login_count")
+    daily_logins = daily_logins.sort_index()
+
+    st.line_chart(daily_logins)
+
+    if len(daily_logins) >= 3:  # need at least 3 days
+        model = ARIMA(daily_logins, order=(1,1,0))
         model_fit = model.fit()
-        forecast = model_fit.forecast(steps=3)
+        forecast_7d = model_fit.forecast(steps=7)
 
-        fig, ax = plt.subplots()
-        suspicious_daily.plot(ax=ax, label="Historical")
-        forecast.plot(ax=ax, style="--", label="Forecast")
+        fig, ax = plt.subplots(figsize=(10,5))
+        ax.plot(daily_logins.index, daily_logins.values, label="Historical Logins", marker='o')
+        ax.plot(forecast_7d.index, forecast_7d.values, label="Forecast (7 days)", linestyle="--", marker='x')
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Number of Logins")
+        ax.set_title("Daily Logins with 7-Day Forecast")
         ax.legend()
+        plt.xticks(rotation=45)
         st.pyplot(fig)
 
-        st.write("Next possible attack day(s) prediction:")
-        st.dataframe(forecast.rename("forecasted_suspicious_attempts"))
+        st.write("Forecasted logins for next 7 days:")
+        st.dataframe(forecast_7d.rename("forecasted_logins"))
     else:
-        st.info("Need at least 3 days of data for forecast demo.")
+        st.info("Need at least 3 days of login data to forecast.")
 
 else:
     st.info("Upload a CSV file to see suspicious IP analysis.")
