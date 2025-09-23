@@ -7,6 +7,10 @@ from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.arima.model import ARIMA
 import matplotlib.pyplot as plt
 from PIL import Image
+import statsmodels
+import streamlit as st
+# st.write("Statsmodels version:", statsmodels.__version__)
+
 
 # ------------------ CONFIG ------------------
 RANDOM_SEED = 42
