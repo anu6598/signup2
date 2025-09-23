@@ -544,6 +544,34 @@ ip_time_buckets["requests_1d"] = (
 st.markdown("**Requests per IP Address (with thresholds applied)**")
 st.dataframe(ip_time_buckets.sort_values("requests_per_min", ascending=False).head(100))
 
+# -------------------------
+# Device-level summary (requests + unique IPs + unique users)
+# -------------------------
+if "dr_dv" in otp_login_df.columns:
+    device_summary = (
+        otp_login_df.groupby("dr_dv")
+        .agg(
+            total_requests=("request_path", "count"),
+            unique_ips=("x_real_ip", "nunique"),
+            unique_users=("user_id", "nunique") if "user_id" in otp_login_df.columns else ("request_path", "count")
+        )
+        .reset_index()
+        .sort_values("total_requests", ascending=False)
+    )
+else:
+    device_summary = pd.DataFrame(columns=["dr_dv", "total_requests", "unique_ips", "unique_users"])
+
+st.subheader("📱 Device Summary (Requests, IPs, Users)")
+st.dataframe(device_summary.head(100))
+
+# Add download option
+st.download_button(
+    "Download device summary (CSV)",
+    device_summary.to_csv(index=False).encode("utf-8"),
+    "device_summary.csv",
+    "text/csv"
+)
+
 
 # rates summary table downloads
 st.subheader("Downloads")
