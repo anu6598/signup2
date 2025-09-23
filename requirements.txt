@@ -15,4 +15,11 @@ seaborn
 scipy
 statsmodels
 pmdarima
+streamlit
+pandas
+numpy
+scikit-learn
+statsmodels
+matplotlib
+Pillow
 
