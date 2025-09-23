@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-from datetime import timedelta
+from datetime import timedelta, datetime
 from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import LinearRegression
 from PIL import Image
+import matplotlib.pyplot as plt
 
 # ------------------ CONFIG ------------------
 RANDOM_SEED = 42
@@ -81,7 +83,8 @@ Upload your attack-day logs CSV to analyze suspicious IPs based on:
 - High failure rate  
 - Proxy presence  
 - BMP score  
-- IsolationForest anomaly
+- IsolationForest anomaly  
+- Linear Regression Forecast of next 7 days
 """)
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
@@ -219,13 +222,41 @@ if uploaded_file:
 
     st.dataframe(display_df[["ip_addr","final_label","all_reasons"]])
 
-    st.subheader("Daily Login Attempt Summary")
+    # ---------- Daily Login Attempt Summary ----------
+    st.subheader("Daily Login Attempt Summary & 7-day Forecast")
     daily_summary = df.groupby(df["ts"].dt.date).agg(
         total_requests=("ts","count"),
         failed_requests=("is_fail","sum"),
         unique_ips=("ip_addr","nunique")
     ).reset_index().rename(columns={"ts":"date"})
+
     st.dataframe(daily_summary)
+
+    # ---------- Linear Regression Forecast ----------
+    daily_summary_lr = daily_summary.copy()
+    daily_summary_lr["date_ordinal"] = pd.to_datetime(daily_summary_lr["date"]).map(datetime.toordinal)
+    X = daily_summary_lr["date_ordinal"].values.reshape(-1,1)
+    y = daily_summary_lr["total_requests"].values
+
+    model = LinearRegression()
+    model.fit(X, y)
+
+    # Forecast next 7 days
+    last_date = daily_summary_lr["date"].max()
+    future_dates = [last_date + timedelta(days=i) for i in range(1,8)]
+    X_future = np.array([d.toordinal() for d in future_dates]).reshape(-1,1)
+    y_future = model.predict(X_future)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10,5))
+    ax.plot(daily_summary_lr["date"], daily_summary_lr["total_requests"], marker='o', label="Actual Requests")
+    ax.plot(future_dates, y_future, marker='x', linestyle='--', color='red', label="7-Day Forecast")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Total Requests")
+    ax.set_title("Daily Login Attempts with 7-Day Forecast")
+    ax.legend()
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
 
 else:
     st.info("Upload a CSV file to see suspicious IP analysis.")
