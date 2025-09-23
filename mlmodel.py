@@ -4,6 +4,8 @@ import numpy as np
 import re
 from datetime import timedelta
 from sklearn.ensemble import IsolationForest
+from statsmodels.tsa.arima.model import ARIMA  # NEW
+import matplotlib.pyplot as plt
 from PIL import Image
 
 # ------------------ CONFIG ------------------
@@ -82,6 +84,7 @@ Upload your attack-day logs CSV to analyze suspicious IPs based on:
 - Proxy presence  
 - BMP score  
 - IsolationForest anomaly
+- Forecasting suspicious login attempts  
 """)
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
@@ -99,7 +102,6 @@ if uploaded_file:
     col_ts = pick_col(df, ["timestamp","time","created_on","ts","start_time","event_time"])
     col_ip = pick_col(df, ["x_real_ip","true_client_ip","client_ip","ip","remote_addr","remote_ip"])
     col_user = pick_col(df, ["user_id","user","username","dr_uid"])
-    col_path = pick_col(df, ["request_path","path","url","endpoint","request"])
     col_status = pick_col(df, ["response_code","status","result","response"])
     col_device = pick_col(df, ["dr_dv","device_id","device"])
     col_epd = pick_col(df, ["akamai_epd","epd","akamai_proxy"])
@@ -134,8 +136,6 @@ if uploaded_file:
     ip_agg = (
         df.groupby("ip_addr")
         .agg(
-            first_seen=("ts","min"),
-            last_seen=("ts","max"),
             total_requests=("ts","count"),
             failed_requests=("is_fail","sum"),
             unique_usernames=("username", lambda s: s.nunique(dropna=True)),
@@ -149,11 +149,8 @@ if uploaded_file:
     # Short-window features
     max_1m = df.groupby(["ip_addr","minute_floor"]).size().groupby("ip_addr").max().reset_index(name="max_attempts_1m")
     max_10m = df.groupby(["ip_addr","min10_floor"]).size().groupby("ip_addr").max().reset_index(name="max_attempts_10m")
-    sum_10m = df.groupby(["ip_addr","min10_floor"]).size().groupby("ip_addr").sum().reset_index(name="sum_10m")
-
     ip_agg = ip_agg.merge(max_1m, on="ip_addr", how="left")
     ip_agg = ip_agg.merge(max_10m, on="ip_addr", how="left")
-    ip_agg = ip_agg.merge(sum_10m, on="ip_addr", how="left")
 
     # fill NaNs
     ip_agg.fillna(0, inplace=True)
@@ -166,11 +163,10 @@ if uploaded_file:
 
     # IsolationForest
     numeric_features = ["total_requests","failed_requests","failure_rate",
-                        "unique_usernames","unique_devices","max_attempts_1m","max_attempts_10m","sum_10m","is_proxy_ip","bmp_max"]
+                        "unique_usernames","unique_devices","max_attempts_1m","max_attempts_10m","is_proxy_ip","bmp_max"]
     ip_agg[numeric_features] = ip_agg[numeric_features].fillna(0)
     clf = IsolationForest(random_state=RANDOM_SEED, contamination=ISO_CONTAMINATION)
     clf.fit(ip_agg[numeric_features])
-    ip_agg["iso_score_raw"] = clf.decision_function(ip_agg[numeric_features])
     ip_agg["iso_anomaly"] = (clf.predict(ip_agg[numeric_features])==-1).astype(int)
 
     # Final label
@@ -196,12 +192,6 @@ if uploaded_file:
         st.dataframe(filtered_ips[["ip_addr","total_requests","failed_requests","failure_rate",
                                    "unique_usernames","unique_devices","proxy_row_count","bmp_max","all_reasons"]])
 
-    st.subheader("Platform / Device Info")
-    st.dataframe(df[["ip_addr","device_id","username","akamai_epd","akamai_bot"]].head(50))
-
-    st.subheader("Detailed Reasons for Suspicion")
-    st.dataframe(ip_agg[["ip_addr","final_label","all_reasons"]])
-
     st.subheader("Daily Login Attempt Summary")
     daily_summary = df.groupby(df["ts"].dt.date).agg(
         total_requests=("ts","count"),
@@ -209,6 +199,30 @@ if uploaded_file:
         unique_ips=("ip_addr","nunique")
     ).reset_index().rename(columns={"ts":"date"})
     st.dataframe(daily_summary)
+
+    # ---------- FORECAST ----------
+    st.subheader("📈 Attack Forecast (Demo)")
+    # suspicious = total suspicious attempts/day
+    suspicious_daily = ip_agg[ip_agg["final_label"]=="suspicious"].groupby(
+        ip_agg["ip_addr"].map(lambda x: df[df["ip_addr"]==x]["ts"].dt.date.min())
+    ).size()
+
+    if len(suspicious_daily) >= 3:  # need at least 3 points
+        suspicious_daily = suspicious_daily.sort_index()
+        model = ARIMA(suspicious_daily, order=(1,1,0))
+        model_fit = model.fit()
+        forecast = model_fit.forecast(steps=3)
+
+        fig, ax = plt.subplots()
+        suspicious_daily.plot(ax=ax, label="Historical")
+        forecast.plot(ax=ax, style="--", label="Forecast")
+        ax.legend()
+        st.pyplot(fig)
+
+        st.write("Next possible attack day(s) prediction:")
+        st.dataframe(forecast.rename("forecasted_suspicious_attempts"))
+    else:
+        st.info("Need at least 3 days of data for forecast demo.")
 
 else:
     st.info("Upload a CSV file to see suspicious IP analysis.")
