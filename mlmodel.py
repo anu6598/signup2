@@ -73,7 +73,7 @@ def final_label_and_reasons(row):
 st.set_page_config(page_title="🔐 Suspicious IP Dashboard", layout="wide")
 
 # ---------- SIDEBAR ----------
-st.sidebar.image("cybersecurity.png", use_column_width=True)  # your image
+st.sidebar.image("cybersecurity.png", use_column_width=True)  # replace with your own image
 st.sidebar.title("Suspicious IP Dashboard")
 st.sidebar.markdown("""
 Upload your attack-day logs CSV to analyze suspicious IPs based on:
