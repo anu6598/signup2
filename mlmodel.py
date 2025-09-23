@@ -199,8 +199,25 @@ if uploaded_file:
     st.subheader("Platform / Device Info")
     st.dataframe(df[["ip_addr","device_id","username","akamai_epd","akamai_bot"]].head(50))
 
+    # ---------- Detailed Reasons for Suspicion with Filters ----------
     st.subheader("Detailed Reasons for Suspicion")
-    st.dataframe(ip_agg[["ip_addr","final_label","all_reasons"]])
+
+    # final_label filter
+    label_filter = st.selectbox(
+        "Filter by final_label",
+        ["All", "suspicious", "benign"]
+    )
+
+    # IP search box
+    ip_search = st.text_input("Search by IP (partial match allowed)")
+
+    display_df = ip_agg.copy()
+    if label_filter != "All":
+        display_df = display_df[display_df["final_label"] == label_filter]
+    if ip_search:
+        display_df = display_df[display_df["ip_addr"].str.contains(ip_search)]
+
+    st.dataframe(display_df[["ip_addr","final_label","all_reasons"]])
 
     st.subheader("Daily Login Attempt Summary")
     daily_summary = df.groupby(df["ts"].dt.date).agg(
