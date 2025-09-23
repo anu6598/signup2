@@ -215,4 +215,18 @@ if uploaded_file:
 
         # Plot
         fig, ax = plt.subplots(figsize=(10,5))
-        ax.plot(daily_logins.index, daily_logins.values, label="Historical
+        ax.plot(daily_logins.index, daily_logins.values, label="Historical", marker='o')
+        ax.plot(forecast_7d.index, forecast_7d.values, label="7-Day Forecast", linestyle='--', marker='o')
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Number of Logins")
+        ax.legend()
+        plt.xticks(rotation=45)
+        st.pyplot(fig)
+
+        st.subheader("Forecasted Logins (Next 7 Days)")
+        st.dataframe(forecast_7d.rename("forecasted_logins"))
+    else:
+        st.info("Need at least 3 days of data for forecast demo.")
+
+else:
+    st.info("Upload a CSV file to see suspicious IP analysis.")
