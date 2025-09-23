@@ -4,13 +4,9 @@ import numpy as np
 import re
 from datetime import timedelta
 from sklearn.ensemble import IsolationForest
-from statsmodels.tsa.arima.model import ARIMA
 import matplotlib.pyplot as plt
 from PIL import Image
-import statsmodels
-import streamlit as st
-# st.write("Statsmodels version:", statsmodels.__version__)
-
+import pmdarima as pm  # alternative for ARIMA
 
 # ------------------ CONFIG ------------------
 RANDOM_SEED = 42
@@ -204,33 +200,19 @@ if uploaded_file:
     ).reset_index().rename(columns={"ts":"date"})
     st.dataframe(daily_summary)
 
-    # ---------- DAILY LOGINS + 7-DAY FORECAST ----------
+    # ---------- DAILY LOGINS + 7-DAY FORECAST USING PMDARIMA ----------
     st.subheader("📊 Daily Login Count & 7-Day Forecast")
-
     daily_logins = df.groupby(df["ts"].dt.date).size().rename("login_count")
     daily_logins = daily_logins.sort_index()
-
     st.line_chart(daily_logins)
 
-    if len(daily_logins) >= 3:  # need at least 3 days
-        model = ARIMA(daily_logins, order=(1,1,0))
-        model_fit = model.fit()
-        forecast_7d = model_fit.forecast(steps=7)
+    if len(daily_logins) >= 3:
+        # Fit ARIMA automatically
+        arima_model = pm.auto_arima(daily_logins, seasonal=False, suppress_warnings=True)
+        forecast_7d = arima_model.predict(n_periods=7)
+        future_dates = pd.date_range(daily_logins.index[-1] + pd.Timedelta(days=1), periods=7)
+        forecast_7d = pd.Series(forecast_7d, index=future_dates)
 
+        # Plot
         fig, ax = plt.subplots(figsize=(10,5))
-        ax.plot(daily_logins.index, daily_logins.values, label="Historical Logins", marker='o')
-        ax.plot(forecast_7d.index, forecast_7d.values, label="Forecast (7 days)", linestyle="--", marker='x')
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Number of Logins")
-        ax.set_title("Daily Logins with 7-Day Forecast")
-        ax.legend()
-        plt.xticks(rotation=45)
-        st.pyplot(fig)
-
-        st.write("Forecasted logins for next 7 days:")
-        st.dataframe(forecast_7d.rename("forecasted_logins"))
-    else:
-        st.info("Need at least 3 days of login data to forecast.")
-
-else:
-    st.info("Upload a CSV file to see suspicious IP analysis.")
+        ax.plot(daily_logins.index, daily_logins.values, label="Historical
