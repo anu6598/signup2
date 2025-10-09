@@ -738,4 +738,133 @@ def show_otp_abuse():
                 .str.lower()
                 .isin(["-", "rp", ""])
             )
-            .
+            .groupby("x_real_ip")["is_proxy_row"]
+            .any()
+            .astype(int)
+            .rename("proxy_hits")
+        )
+
+        grouped_rolled = grouped_rolled.join(proxy_hits, on="x_real_ip")
+        grouped_rolled["proxy_hits"] = grouped_rolled["proxy_hits"].fillna(0).astype(int)
+        grouped_rolled["is_proxy_ip"] = grouped_rolled["is_proxy_ip"].fillna(False)
+
+        # Mark attack candidates
+        grouped_rolled["attack_candidate"] = (
+            (grouped_rolled["attempts_in_10_min"] > burst_threshold) |
+            ((grouped_rolled["is_proxy_ip"]) & (grouped_rolled["proxy_hits"] > proxy_repeat_threshold))
+        )
+
+        minute_bucket_table = grouped_rolled.copy()
+
+        # Display results
+        st.subheader("📊 OTP Abuse Analysis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Total OTP Rows", len(otp_login_df))
+            st.metric("Unique IPs", otp_login_df["x_real_ip"].nunique())
+        
+        with col2:
+            proxy_ratio = grouped_rolled["is_proxy_ip"].mean() * 100
+            st.metric("Proxy Ratio (%)", f"{proxy_ratio:.2f}")
+            attack_candidates = grouped_rolled["attack_candidate"].sum()
+            st.metric("Attack Candidates", attack_candidates)
+
+        st.subheader("Minute-bucket Analysis")
+        st.dataframe(minute_bucket_table.sort_values("attempts_in_10_min", ascending=False).head(100))
+
+        # Grouped IPs view
+        otp_login_df["ip_mask_1"] = otp_login_df["x_real_ip"].apply(lambda x: collapse_ip(x, 1))
+        masked_ip_counts = (
+            otp_login_df.groupby("ip_mask_1").size().reset_index(name="request_count")
+            .sort_values("request_count", ascending=False)
+        )
+
+        st.subheader("Grouped IPs (last octet masked)")
+        st.dataframe(masked_ip_counts.head(50))
+
+def show_360_attack():
+    st.title("🚨 360° API Attack Detection System")
+    
+    if st.session_state.df is None:
+        st.info("👆 Please upload a CSV file to begin analysis.")
+        return
+        
+    df = st.session_state.df
+    
+    # Ensure platform column exists
+    if 'dr_platform' in df.columns:
+        df['platform'] = df['dr_platform'].fillna('web')
+    else:
+        df['platform'] = 'web'
+        
+    # Ensure minute column for time-based analysis
+    if 'minute' not in df.columns and 'start_time' in df.columns:
+        df['minute'] = df['start_time'].dt.floor('min')
+
+    st.subheader("🔍 Sample of Uploaded Data")
+    st.dataframe(df.head(20))
+
+    if st.button("🚨 Run Attack Detection"):
+        with st.spinner("Detecting attack patterns..."):
+            brute_df = detect_brute_force(df)
+            vpn_df = detect_vpn_geo(df)
+            bot_df = detect_bots(df)
+            ddos_df = detect_ddos(df)
+
+            attack_summary = pd.concat([
+                summarize_detection("Brute Force", brute_df),
+                summarize_detection("VPN/Geo Switch", vpn_df),
+                summarize_detection("Bot-like", bot_df),
+                summarize_detection("DDoS", ddos_df)
+            ])
+
+            user_ip_breakdown = pd.concat([
+                user_ip_summary(brute_df, "Brute Force"),
+                user_ip_summary(vpn_df, "VPN/Geo Switch"),
+                user_ip_summary(bot_df, "Bot-like"),
+                user_ip_summary(ddos_df, "DDoS")
+            ])
+
+        st.success("✅ Detection completed!")
+
+        st.subheader("📊 Attack Summary by Platform")
+        st.dataframe(attack_summary)
+
+        if not attack_summary.empty:
+            fig = px.bar(
+                attack_summary,
+                x='platform',
+                y='Suspicious Requests',
+                color='attack_type',
+                barmode='group',
+                title="Threat Type Distribution by Platform"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("👥 Unique Users per IP in Attack Types")
+        st.dataframe(user_ip_breakdown)
+
+        for label, df_attack in zip(
+            ["🔐 Brute Force", "🕵️ VPN/Geo Switch", "🤖 Bot-like", "🌊 DDoS"],
+            [brute_df, vpn_df, bot_df, ddos_df]
+        ):
+            st.subheader(label)
+
+            if not df_attack.empty:
+                display_cols = ['start_time', 'x_real_ip', 'request_path']
+                if 'dr_uid' in df_attack.columns:
+                    display_cols.append('dr_uid')
+                    
+                st.dataframe(df_attack[display_cols].head(10))
+
+                if 'minute' in df_attack.columns:
+                    chart_data = df_attack.groupby('minute').size().reset_index(name='Request Count')
+                    fig = px.line(chart_data, x='minute', y='Request Count', title=f"{label} Over Time")
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"No suspicious activity detected for {label}.")
+
+if __name__ == "__main__":
+    main()
