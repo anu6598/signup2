@@ -246,6 +246,84 @@ def generate_future_predictions(df):
     
     return pd.DataFrame({'date': dates, 'predicted_signups': predictions})
 
+def get_final_daily_categorization(df):
+    """Generate final daily categorization for attack assessment"""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    final_categories = []
+    
+    # Precompute is_proxy
+    if "akamai_epd" in df.columns:
+        epd_norm = df["akamai_epd"].astype(str).str.strip().str.lower()
+        df["is_proxy"] = ~epd_norm.isin(["-", "rp", "", "nan"])
+    else:
+        df["is_proxy"] = False
+
+    # Group by date if available, otherwise treat entire dataset as one day
+    if "date" in df.columns:
+        date_groups = df.groupby("date")
+    else:
+        date_groups = [("All Data", df)]
+    
+    for day, group in date_groups:
+        total_otps = len(group)
+        
+        # Safe extraction with defaults
+        max_requests_ip = group["x_real_ip"].value_counts().max() if "x_real_ip" in group.columns else 0
+        max_requests_device = group["dr_dv"].value_counts().max() if "dr_dv" in group.columns else 0
+        
+        # Proxy ratio per group
+        proxy_ratio = group["is_proxy"].mean() * 100 if "is_proxy" in group.columns else 0.0
+        
+        # OTP and login specific counts
+        if 'request_path' in group.columns:
+            otp_requests = len(group[group['request_path'].str.contains('otp', case=False, na=False)])
+            login_requests = len(group[group['request_path'].str.contains('login', case=False, na=False)])
+            signup_requests = len(group[group['request_path'].str.contains('signup', case=False, na=False)])
+        else:
+            otp_requests = login_requests = signup_requests = 0
+        
+        # Rule categorization with enhanced logic
+        if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 20) and (max_requests_device > 15):
+            category = "🚨 CRITICAL: OTP Abuse/Attack Detected"
+            risk_level = "CRITICAL"
+        elif (max_requests_ip > 50) and (total_otps > 500):
+            category = "🔴 HIGH: Suspicious Brute Force Activity"
+            risk_level = "HIGH"
+        elif (proxy_ratio > 30) and (max_requests_ip > 20):
+            category = "🔴 HIGH: Proxy Abuse Detected"
+            risk_level = "HIGH"
+        elif (max_requests_ip > 25) and (total_otps > 1000) and (max_requests_device > 15):
+            category = "🟡 MEDIUM: High OTP Request Volume"
+            risk_level = "MEDIUM"
+        elif proxy_ratio > 20:
+            category = "🟡 MEDIUM: Elevated Proxy Usage"
+            risk_level = "MEDIUM"
+        elif max_requests_ip > 15 or max_requests_device > 10:
+            category = "🔵 LOW: Minor Anomalies Detected"
+            risk_level = "LOW"
+        else:
+            category = "✅ NORMAL: No Suspicious Activity"
+            risk_level = "NORMAL"
+
+        final_categories.append({
+            "date": day,
+            "category": category,
+            "risk_level": risk_level,
+            "total_requests": total_otps,
+            "otp_requests": otp_requests,
+            "login_requests": login_requests,
+            "signup_requests": signup_requests,
+            "max_requests_ip": max_requests_ip,
+            "max_requests_device": max_requests_device,
+            "proxy_ratio": f"{proxy_ratio:.1f}%",
+            "unique_ips": group["x_real_ip"].nunique() if "x_real_ip" in group.columns else 0,
+            "unique_devices": group["dr_dv"].nunique() if "dr_dv" in group.columns else 0
+        })
+    
+    return pd.DataFrame(final_categories)
+
 def show_daily_stats(df):
     st.title("📊 Daily Stats")
 
@@ -405,8 +483,42 @@ def show_ml_predictions():
         else:
             st.metric("Today's Data", "N/A")
     
+    # Final Daily Categorization
+    st.header("🚨 Final Daily Categorization")
+    
+    final_categorization = get_final_daily_categorization(df)
+    
+    if not final_categorization.empty:
+        # Display with color coding
+        for _, row in final_categorization.iterrows():
+            risk_colors = {
+                "CRITICAL": "red",
+                "HIGH": "orange", 
+                "MEDIUM": "yellow",
+                "LOW": "blue",
+                "NORMAL": "green"
+            }
+            
+            color = risk_colors.get(row['risk_level'], "gray")
+            
+            st.markdown(f"""
+            <div style="background-color: {color}20; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin: 10px 0;">
+                <h4 style="color: {color}; margin: 0;">{row['category']}</h4>
+                <p style="margin: 5px 0;"><strong>Date:</strong> {row['date']} | <strong>Total Requests:</strong> {row['total_requests']:,}</p>
+                <p style="margin: 5px 0;"><strong>OTP:</strong> {row['otp_requests']} | <strong>Login:</strong> {row['login_requests']} | <strong>Signup:</strong> {row['signup_requests']}</p>
+                <p style="margin: 5px 0;"><strong>Max IP Requests:</strong> {row['max_requests_ip']} | <strong>Max Device Requests:</strong> {row['max_requests_device']}</p>
+                <p style="margin: 5px 0;"><strong>Proxy Ratio:</strong> {row['proxy_ratio']} | <strong>Unique IPs:</strong> {row['unique_ips']} | <strong>Unique Devices:</strong> {row['unique_devices']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Also show as dataframe for detailed view
+        with st.expander("📋 Detailed Categorization Table"):
+            st.dataframe(final_categorization, use_container_width=True)
+    else:
+        st.info("No daily categorization available.")
+    
     # Attack Status Table
-    st.header("🚨 Today's Attack Assessment")
+    st.header("🎯 Quick Attack Assessment")
     
     # Calculate metrics for assessment
     if 'request_path' in df.columns:
@@ -447,7 +559,7 @@ def show_ml_predictions():
     
     st.markdown(f"""
     <div style="background-color: {risk_color[attack_risk]}20; padding: 20px; border-radius: 10px; border-left: 5px solid {risk_color[attack_risk]};">
-        <h3 style="color: {risk_color[attack_risk]}; margin-top: 0;">Attack Risk: {attack_risk}</h3>
+        <h3 style="color: {risk_color[attack_risk]}; margin-top: 0;">Quick Risk Assessment: {attack_risk}</h3>
         <p><strong>Reasons:</strong> {', '.join(reasons)}</p>
         <p><strong>Total Requests:</strong> {len(df):,} | <strong>OTP Requests:</strong> {otp_requests:,} | <strong>Login Requests:</strong> {login_requests:,}</p>
     </div>
@@ -612,259 +724,4 @@ def show_signup_anomalies():
         st.info("No IPs with 5 or more signups in 10 minutes.")
 
     # ML anomalies
-    st.header("3) Machine Learning Detected Anomalies")
-    
-    features = df[['count_15min', 'count_10min']].fillna(0)
-    iso = IsolationForest(contamination=0.01, random_state=42)
-    df['ml_flag'] = iso.fit_predict(features)
-
-    anomalies_ml = df[df['ml_flag'] == -1].copy()
-    median_15 = max(1.0, df['count_15min'].median())
-    median_10 = max(1.0, df['count_10min'].median())
-
-    if not anomalies_ml.empty:
-        anomalies_ml['reason'] = anomalies_ml.apply(lambda r: explain_ml_row(r, median_15, median_10), axis=1)
-        st.dataframe(anomalies_ml[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'count_10min', 'user_agent', 'akamai_bot', 'reason']].sort_values(['count_15min','count_10min'], ascending=False))
-    else:
-        st.success("Isolation Forest did not detect anomalies in this dataset.")
-
-    # ML scatter plot
-    df['anomaly_score'] = iso.decision_function(features)
-    fig_ml_scatter = go.Figure()
-    fig_ml_scatter.add_trace(go.Scatter(
-        x=df['count_15min'],
-        y=df['count_10min'],
-        mode='markers',
-        marker=dict(
-            size=8,
-            color=df['anomaly_score'],
-            colorscale='RdBu',
-            colorbar=dict(title="Anomaly Score"),
-            line=dict(width=0.5, color='black')
-        ),
-        text=df['true_client_ip'],
-        name='All Points',
-        hovertemplate='IP: %{text}<br>15-min Count: %{x}<br>10-min Count: %{y}<br>Score: %{marker.color:.3f}<extra></extra>'
-    ))
-
-    anom_points = df[df['ml_flag'] == -1]
-    fig_ml_scatter.add_trace(go.Scatter(
-        x=anom_points['count_15min'],
-        y=anom_points['count_10min'],
-        mode='markers',
-        marker=dict(size=10, color='red', symbol='x'),
-        name='Anomalies'
-    ))
-
-    fig_ml_scatter.update_layout(
-        title="Isolation Forest Feature Space",
-        xaxis_title="Count in 15 min",
-        yaxis_title="Count in 10 min",
-        height=450
-    )
-    st.plotly_chart(fig_ml_scatter, use_container_width=True)
-
-def show_otp_abuse():
-    st.title("🔐 OTP Abuse Detection Dashboard")
-    
-    if st.session_state.df is None:
-        st.info("👆 Please upload a CSV file to begin analysis.")
-        return
-        
-    df = st.session_state.df
-    
-    # OTP-specific processing
-    if 'request_path' in df.columns:
-        df["is_otp_or_login"] = df["request_path"].str.contains("otp|login", case=False, na=False)
-        otp_login_df = df[df["is_otp_or_login"]].copy()
-    else:
-        otp_login_df = df.copy()
-    
-    st.write(f"Detected {len(otp_login_df)} OTP/Login-related rows out of {len(df)} total rows.")
-    
-    if len(otp_login_df) == 0:
-        st.warning("No OTP/login requests found in the data.")
-        return
-
-    # Extract BMP scores
-    def extract_digits(x):
-        m = re.search(r"(\d+)", str(x))
-        return float(m.group(1)) if m else np.nan
-
-    if 'akamai_bot' in otp_login_df.columns:
-        otp_login_df["bmp_score"] = otp_login_df["akamai_bot"].apply(extract_digits)
-
-    # Minute bucket analysis
-    if 'timestamp' in otp_login_df.columns:
-        otp_login_df["minute_bucket"] = otp_login_df["timestamp"].dt.floor("T")
-        
-        grouped = (
-            otp_login_df.groupby(["x_real_ip", "minute_bucket"], as_index=False)
-            .agg(
-                login_attempts=("request_path", "count"),
-                akamai_epd=("akamai_epd", lambda s: s.dropna().iloc[0] if s.dropna().shape[0] > 0 else np.nan)
-            )
-            .sort_values(["x_real_ip", "minute_bucket"])
-        )
-
-        # Threshold controls in sidebar
-        burst_threshold = st.sidebar.number_input("Burst threshold (OTPs within 10 min)", value=10, step=1)
-        burst_window_mins = st.sidebar.number_input("Burst window (minutes)", value=10, step=1)
-
-        # Compute rolling attempts
-        def compute_rolling_attempts(g, window_minutes=10):
-            g = g.set_index("minute_bucket").sort_index()
-            g["attempts_in_10_min"] = g["login_attempts"].rolling(f"{window_minutes}T").sum()
-            g = g.reset_index()
-            return g
-
-        grouped_rolled = grouped.groupby("x_real_ip", group_keys=False).apply(compute_rolling_attempts).reset_index(drop=True)
-
-        # Proxy logic
-        def is_proxy_ip(series):
-            epd_norm = series.astype(str).str.strip().str.lower()
-            return (~epd_norm.isin(["-", "rp", ""])).any()
-
-        proxy_by_ip = otp_login_df.groupby("x_real_ip")["akamai_epd"].apply(is_proxy_ip).rename("is_proxy_ip")
-        grouped_rolled = grouped_rolled.join(proxy_by_ip, on="x_real_ip")
-
-        proxy_repeat_threshold = st.sidebar.number_input("Proxy hits threshold", value=1, step=1)
-        
-        proxy_hits = (
-            otp_login_df.assign(
-                is_proxy_row=~otp_login_df["akamai_epd"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-                .isin(["-", "rp", ""])
-            )
-            .groupby("x_real_ip")["is_proxy_row"]
-            .any()
-            .astype(int)
-            .rename("proxy_hits")
-        )
-
-        grouped_rolled = grouped_rolled.join(proxy_hits, on="x_real_ip")
-        grouped_rolled["proxy_hits"] = grouped_rolled["proxy_hits"].fillna(0).astype(int)
-        grouped_rolled["is_proxy_ip"] = grouped_rolled["is_proxy_ip"].fillna(False)
-
-        # Mark attack candidates
-        grouped_rolled["attack_candidate"] = (
-            (grouped_rolled["attempts_in_10_min"] > burst_threshold) |
-            ((grouped_rolled["is_proxy_ip"]) & (grouped_rolled["proxy_hits"] > proxy_repeat_threshold))
-        )
-
-        minute_bucket_table = grouped_rolled.copy()
-
-        # Display results
-        st.subheader("📊 OTP Abuse Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("Total OTP Rows", len(otp_login_df))
-            st.metric("Unique IPs", otp_login_df["x_real_ip"].nunique())
-        
-        with col2:
-            proxy_ratio = grouped_rolled["is_proxy_ip"].mean() * 100
-            st.metric("Proxy Ratio (%)", f"{proxy_ratio:.2f}")
-            attack_candidates = grouped_rolled["attack_candidate"].sum()
-            st.metric("Attack Candidates", attack_candidates)
-
-        st.subheader("Minute-bucket Analysis")
-        st.dataframe(minute_bucket_table.sort_values("attempts_in_10_min", ascending=False).head(100))
-
-        # Grouped IPs view
-        otp_login_df["ip_mask_1"] = otp_login_df["x_real_ip"].apply(lambda x: collapse_ip(x, 1))
-        masked_ip_counts = (
-            otp_login_df.groupby("ip_mask_1").size().reset_index(name="request_count")
-            .sort_values("request_count", ascending=False)
-        )
-
-        st.subheader("Grouped IPs (last octet masked)")
-        st.dataframe(masked_ip_counts.head(50))
-
-def show_360_attack():
-    st.title("🚨 360° API Attack Detection System")
-    
-    if st.session_state.df is None:
-        st.info("👆 Please upload a CSV file to begin analysis.")
-        return
-        
-    df = st.session_state.df
-    
-    # Ensure platform column exists
-    if 'dr_platform' in df.columns:
-        df['platform'] = df['dr_platform'].fillna('web')
-    else:
-        df['platform'] = 'web'
-        
-    # Ensure minute column for time-based analysis
-    if 'minute' not in df.columns and 'start_time' in df.columns:
-        df['minute'] = df['start_time'].dt.floor('min')
-
-    st.subheader("🔍 Sample of Uploaded Data")
-    st.dataframe(df.head(20))
-
-    if st.button("🚨 Run Attack Detection"):
-        with st.spinner("Detecting attack patterns..."):
-            brute_df = detect_brute_force(df)
-            vpn_df = detect_vpn_geo(df)
-            bot_df = detect_bots(df)
-            ddos_df = detect_ddos(df)
-
-            attack_summary = pd.concat([
-                summarize_detection("Brute Force", brute_df),
-                summarize_detection("VPN/Geo Switch", vpn_df),
-                summarize_detection("Bot-like", bot_df),
-                summarize_detection("DDoS", ddos_df)
-            ])
-
-            user_ip_breakdown = pd.concat([
-                user_ip_summary(brute_df, "Brute Force"),
-                user_ip_summary(vpn_df, "VPN/Geo Switch"),
-                user_ip_summary(bot_df, "Bot-like"),
-                user_ip_summary(ddos_df, "DDoS")
-            ])
-
-        st.success("✅ Detection completed!")
-
-        st.subheader("📊 Attack Summary by Platform")
-        st.dataframe(attack_summary)
-
-        if not attack_summary.empty:
-            fig = px.bar(
-                attack_summary,
-                x='platform',
-                y='Suspicious Requests',
-                color='attack_type',
-                barmode='group',
-                title="Threat Type Distribution by Platform"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("👥 Unique Users per IP in Attack Types")
-        st.dataframe(user_ip_breakdown)
-
-        for label, df_attack in zip(
-            ["🔐 Brute Force", "🕵️ VPN/Geo Switch", "🤖 Bot-like", "🌊 DDoS"],
-            [brute_df, vpn_df, bot_df, ddos_df]
-        ):
-            st.subheader(label)
-
-            if not df_attack.empty:
-                display_cols = ['start_time', 'x_real_ip', 'request_path']
-                if 'dr_uid' in df_attack.columns:
-                    display_cols.append('dr_uid')
-                    
-                st.dataframe(df_attack[display_cols].head(10))
-
-                if 'minute' in df_attack.columns:
-                    chart_data = df_attack.groupby('minute').size().reset_index(name='Request Count')
-                    fig = px.line(chart_data, x='minute', y='Request Count', title=f"{label} Over Time")
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info(f"No suspicious activity detected for {label}.")
-
-if __name__ == "__main__":
-    main()
+   
