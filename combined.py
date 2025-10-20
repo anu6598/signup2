@@ -50,13 +50,10 @@ def normalize_dataframe(df_raw):
 
     return df
 
-def analyze_brute_force_patterns(df):
-    """
-    Comprehensive brute force detection with hourly analysis
-    Returns aggregated patterns and suspicious IPs
-    """
+def prepare_hourly_data(df):
+    """Prepare hourly data for analysis"""
     if df is None or df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return df
     
     # Ensure timestamp is parsed
     df = df.copy()
@@ -66,6 +63,19 @@ def analyze_brute_force_patterns(df):
     # Create hourly time buckets
     df['hour_bucket'] = df['timestamp'].dt.floor('H')
     df['date'] = df['timestamp'].dt.date
+    
+    return df
+
+def analyze_brute_force_patterns(df):
+    """
+    Comprehensive brute force detection with hourly analysis
+    Returns aggregated patterns and suspicious IPs
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    
+    # Prepare data with hourly buckets
+    df = prepare_hourly_data(df)
     
     # 🎯 HOURLY IP ANALYSIS
     hourly_ip_analysis = df.groupby(['date', 'hour_bucket', 'ip_address']).agg({
@@ -141,31 +151,35 @@ def analyze_brute_force_patterns(df):
     
     return hourly_ip_analysis, suspicious_df
 
-def detect_advanced_patterns(df, hourly_analysis):
-    """Detect advanced brute force patterns"""
+def detect_advanced_patterns(df):
+    """Detect advanced brute force patterns using hourly data"""
     patterns = []
     
+    # Prepare data first
+    df = prepare_hourly_data(df)
+    
     # Pattern 1: Rapid succession attempts (same IP, different users)
-    user_switching = df.groupby(['ip_address', 'hour_bucket']).agg({
-        'username': ['count', 'nunique']
-    }).reset_index()
-    user_switching.columns = ['ip_address', 'hour_bucket', 'total_attempts', 'unique_users']
-    user_switching['user_switch_ratio'] = user_switching['unique_users'] / user_switching['total_attempts']
-    
-    high_switching = user_switching[
-        (user_switching['user_switch_ratio'] > 0.7) & 
-        (user_switching['total_attempts'] > 5)
-    ]
-    
-    for _, row in high_switching.iterrows():
-        patterns.append({
-            'pattern_type': 'CREDENTIAL_STUFFING',
-            'ip_address': row['ip_address'],
-            'hour_bucket': row['hour_bucket'],
-            'metric': f"High user switching ({row['user_switch_ratio']:.1%})",
-            'attempts': row['total_attempts'],
-            'unique_users': row['unique_users']
-        })
+    if 'username' in df.columns:
+        user_switching = df.groupby(['ip_address', 'hour_bucket']).agg({
+            'username': ['count', 'nunique']
+        }).reset_index()
+        user_switching.columns = ['ip_address', 'hour_bucket', 'total_attempts', 'unique_users']
+        user_switching['user_switch_ratio'] = user_switching['unique_users'] / user_switching['total_attempts']
+        
+        high_switching = user_switching[
+            (user_switching['user_switch_ratio'] > 0.7) & 
+            (user_switching['total_attempts'] > 5)
+        ]
+        
+        for _, row in high_switching.iterrows():
+            patterns.append({
+                'pattern_type': 'CREDENTIAL_STUFFING',
+                'ip_address': row['ip_address'],
+                'hour_bucket': row['hour_bucket'],
+                'metric': f"High user switching ({row['user_switch_ratio']:.1%})",
+                'attempts': row['total_attempts'],
+                'unique_users': row['unique_users']
+            })
     
     # Pattern 2: Distributed attacks (multiple IPs, same user)
     if 'username' in df.columns:
@@ -184,6 +198,23 @@ def detect_advanced_patterns(df, hourly_analysis):
                 'metric': f"Multiple source IPs ({row['unique_ips']})",
                 'unique_ips': row['unique_ips']
             })
+    
+    # Pattern 3: High frequency attempts from single IP
+    ip_frequency = df.groupby(['ip_address', 'hour_bucket']).agg({
+        'timestamp': 'count'
+    }).reset_index()
+    ip_frequency.columns = ['ip_address', 'hour_bucket', 'attempt_count']
+    
+    high_frequency = ip_frequency[ip_frequency['attempt_count'] > 20]
+    
+    for _, row in high_frequency.iterrows():
+        patterns.append({
+            'pattern_type': 'HIGH_FREQUENCY',
+            'ip_address': row['ip_address'],
+            'hour_bucket': row['hour_bucket'],
+            'metric': f"High attempt frequency ({row['attempt_count']} requests)",
+            'attempt_count': row['attempt_count']
+        })
     
     return pd.DataFrame(patterns)
 
@@ -263,10 +294,13 @@ def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patte
                             title='Unique IPs by Hour')
             st.plotly_chart(fig_ips, use_container_width=True)
 
-def create_ip_behavior_analysis(df, top_n=20):
+def create_ip_behavior_analysis(df):
     """Analyze IP behavior patterns"""
     if df.empty or 'ip_address' not in df.columns:
         return pd.DataFrame()
+    
+    # Prepare data first
+    df = prepare_hourly_data(df)
     
     # Group by IP and analyze behavior
     ip_behavior = df.groupby('ip_address').agg({
@@ -303,7 +337,7 @@ def create_ip_behavior_analysis(df, top_n=20):
                                        np.where(ip_behavior['total_risk_score'] >= 4, 'HIGH',
                                               np.where(ip_behavior['total_risk_score'] >= 2, 'MEDIUM', 'LOW')))
     
-    return ip_behavior.sort_values('total_risk_score', ascending=False).head(top_n)
+    return ip_behavior.sort_values('total_risk_score', ascending=False).head(20)
 
 # ------------------------------
 # Main Application
@@ -395,7 +429,7 @@ def display_analysis_dashboard(df, min_requests, risk_threshold):
     # Run brute force analysis
     with st.spinner("🔍 Analyzing brute force patterns..."):
         hourly_analysis, suspicious_ips = analyze_brute_force_patterns(df)
-        advanced_patterns = detect_advanced_patterns(df, hourly_analysis)
+        advanced_patterns = detect_advanced_patterns(df)
         ip_behavior = create_ip_behavior_analysis(df)
     
     # Display main dashboard
@@ -413,8 +447,9 @@ def display_analysis_dashboard(df, min_requests, risk_threshold):
         
         # Risk distribution
         risk_dist = ip_behavior['risk_level'].value_counts()
-        st.plotly_chart(px.pie(values=risk_dist.values, names=risk_dist.index, 
-                             title="Risk Level Distribution"), use_container_width=True)
+        if not risk_dist.empty:
+            st.plotly_chart(px.pie(values=risk_dist.values, names=risk_dist.index, 
+                                 title="Risk Level Distribution"), use_container_width=True)
     
     # Raw data preview
     with st.expander("📋 Raw Data Preview"):
