@@ -36,6 +36,19 @@ def normalize_dataframe(df_raw):
     else:
         df['platform'] = 'unknown'
     
+    # Ensure true_client_ip column exists
+    if 'true_client_ip' not in df.columns:
+        # Try to find IP column
+        ip_col = None
+        for col in ['x_real_ip', 'client_ip', 'ip', 'remote_addr']:
+            if col in df.columns:
+                ip_col = col
+                break
+        if ip_col:
+            df['true_client_ip'] = df[ip_col].astype(str)
+        else:
+            df['true_client_ip'] = 'unknown'
+    
     return df
 
 def detect_platform_from_ua(user_agent):
@@ -77,9 +90,9 @@ def analyze_request_success(df, request_type):
         'successful_requests': len(successful),
         'failed_requests': len(failed),
         'success_rate': len(successful) / len(login_df) * 100 if len(login_df) > 0 else 0,
-        'unique_ips': login_df['x_real_ip'].nunique() if 'x_real_ip' in login_df.columns else 0,
-        'unique_successful_ips': successful['x_real_ip'].nunique() if 'x_real_ip' in successful.columns else 0,
-        'unique_failed_ips': failed['x_real_ip'].nunique() if 'x_real_ip' in failed.columns else 0
+        'unique_ips': login_df['true_client_ip'].nunique() if 'true_client_ip' in login_df.columns else 0,
+        'unique_successful_ips': successful['true_client_ip'].nunique() if 'true_client_ip' in successful.columns else 0,
+        'unique_failed_ips': failed['true_client_ip'].nunique() if 'true_client_ip' in failed.columns else 0
     }
     
     return analysis
@@ -95,20 +108,22 @@ def enhanced_security_assessment(login_df, signup_df, suspicious_df=None):
         'suspicious_ips': [],
         'platform_analysis': {},
         'attack_indicators': {},
-        'rule_categorization': []
+        'rule_categorization': [],
+        'top_login_ips': [],
+        'top_signup_ips': []
     }
     
     # Analyze login data
     if login_df is not None and not login_df.empty:
         login_analysis = analyze_login_patterns(login_df)
         assessment['login_analysis'] = login_analysis
-        assessment['attack_indicators']['login'] = login_analysis.get('attack_indicators', [])
+        assessment['top_login_ips'] = login_analysis.get('top_ips', [])
     
     # Analyze signup data  
     if signup_df is not None and not signup_df.empty:
         signup_analysis = analyze_signup_patterns(signup_df)
         assessment['signup_analysis'] = signup_analysis
-        assessment['attack_indicators']['signup'] = signup_analysis.get('attack_indicators', [])
+        assessment['top_signup_ips'] = signup_analysis.get('top_ips', [])
     
     # Analyze suspicious activity
     if suspicious_df is not None and not suspicious_df.empty:
@@ -146,7 +161,7 @@ def apply_rule_categorization(assessment, login_df, signup_df):
         total_otps = len(group)
         
         # Calculate metrics for rule categorization
-        max_requests_ip = group['x_real_ip'].value_counts().max() if 'x_real_ip' in group.columns else 0
+        max_requests_ip = group['true_client_ip'].value_counts().max() if 'true_client_ip' in group.columns else 0
         max_requests_device = group['dr_dv'].value_counts().max() if 'dr_dv' in group.columns else 0
         
         # Proxy ratio calculation
@@ -192,54 +207,24 @@ def analyze_login_patterns(df):
     """Enhanced login pattern analysis with clear explanations"""
     analysis = {
         'total_logins': len(df),
-        'unique_ips': df['x_real_ip'].nunique() if 'x_real_ip' in df.columns else 0,
+        'unique_ips': df['true_client_ip'].nunique() if 'true_client_ip' in df.columns else 0,
         'platform_breakdown': df['platform'].value_counts().to_dict() if 'platform' in df.columns else {},
-        'attack_indicators': []
+        'top_ips': []
     }
     
     # Success rate analysis
     success_analysis = analyze_request_success(df, 'login')
     analysis.update(success_analysis)
     
-    # IP frequency analysis with clear thresholds
-    ip_counts = df['x_real_ip'].value_counts()
-    
-    # 🎯 CLEAR THRESHOLDS WITH EXPLANATIONS
-    for ip, count in ip_counts.items():
-        if count > 50:  # Very high volume
-            analysis['attack_indicators'].append({
+    # Get top 10 IPs by request count
+    if 'true_client_ip' in df.columns:
+        ip_counts = df['true_client_ip'].value_counts().head(10)
+        for ip, count in ip_counts.items():
+            analysis['top_ips'].append({
                 'ip': ip,
-                'type': 'VERY_HIGH_LOGIN_ATTEMPTS',
                 'count': count,
-                'risk': 'HIGH',
-                'explanation': f"IP made {count} login attempts - potential brute force attack"
+                'type': 'LOGIN_ATTEMPTS'
             })
-        elif count > 20:  # High volume
-            analysis['attack_indicators'].append({
-                'ip': ip,
-                'type': 'HIGH_LOGIN_ATTEMPTS',
-                'count': count,
-                'risk': 'MEDIUM',
-                'explanation': f"IP made {count} login attempts - suspicious activity"
-            })
-        elif count > 10:  # Elevated volume
-            analysis['attack_indicators'].append({
-                'ip': ip,
-                'type': 'ELEVATED_LOGIN_ATTEMPTS',
-                'count': count,
-                'risk': 'LOW',
-                'explanation': f"IP made {count} login attempts - monitor for patterns"
-            })
-    
-    # Failure rate analysis
-    if analysis.get('failed_requests', 0) > 100:
-        analysis['attack_indicators'].append({
-            'ip': 'MULTIPLE_IPS',
-            'type': 'HIGH_FAILURE_RATE',
-            'count': analysis['failed_requests'],
-            'risk': 'HIGH',
-            'explanation': f"High number of failed logins ({analysis['failed_requests']}) - potential credential stuffing"
-        })
     
     return analysis
 
@@ -247,34 +232,23 @@ def analyze_signup_patterns(df):
     """Enhanced signup pattern analysis with clear explanations"""
     analysis = {
         'total_signups': len(df),
-        'unique_ips': df['x_real_ip'].nunique() if 'x_real_ip' in df.columns else 0,
+        'unique_ips': df['true_client_ip'].nunique() if 'true_client_ip' in df.columns else 0,
         'platform_breakdown': df['platform'].value_counts().to_dict() if 'platform' in df.columns else {},
-        'attack_indicators': []
+        'top_ips': []
     }
     
     # Success rate analysis
     success_analysis = analyze_request_success(df, 'signup')
     analysis.update(success_analysis)
     
-    # Rapid signup detection with clear explanations
-    ip_counts = df['x_real_ip'].value_counts()
-    
-    for ip, count in ip_counts.items():
-        if count > 10:  # Very high signups
-            analysis['attack_indicators'].append({
+    # Get top 10 IPs by request count
+    if 'true_client_ip' in df.columns:
+        ip_counts = df['true_client_ip'].value_counts().head(10)
+        for ip, count in ip_counts.items():
+            analysis['top_ips'].append({
                 'ip': ip,
-                'type': 'VERY_HIGH_SIGNUP_ATTEMPTS',
                 'count': count,
-                'risk': 'HIGH',
-                'explanation': f"IP attempted {count} signups - potential fake account creation"
-            })
-        elif count > 5:  # High signups
-            analysis['attack_indicators'].append({
-                'ip': ip,
-                'type': 'HIGH_SIGNUP_ATTEMPTS',
-                'count': count,
-                'risk': 'MEDIUM',
-                'explanation': f"IP attempted {count} signups - suspicious activity"
+                'type': 'SIGNUP_ATTEMPTS'
             })
     
     return analysis
@@ -285,13 +259,12 @@ def analyze_suspicious_activity(df):
         'total_alerts': len(df),
         'high_risk_ips': [],
         'bot_detections': [],
-        'recaptcha_failures': [],
-        'attack_indicators': []
+        'recaptcha_failures': []
     }
     
     # Extract Akamai bot scores and recaptcha data
     for _, row in df.iterrows():
-        ip = row.get('x_real_ip')
+        ip = row.get('true_client_ip')
         if not ip:
             continue
             
@@ -302,14 +275,7 @@ def analyze_suspicious_activity(df):
                 request_json = json.loads(request_data)
                 akamai_bot = request_json.get('Akamai-Bot', '')
                 if 'bot' in akamai_bot.lower():
-                    detection = {
-                        'ip': ip,
-                        'bot_info': akamai_bot,
-                        'risk': 'HIGH',
-                        'explanation': f"Akamai detected bot activity: {akamai_bot}"
-                    }
-                    analysis['bot_detections'].append(detection)
-                    analysis['attack_indicators'].append(detection)
+                    analysis['bot_detections'].append(ip)
         except:
             pass
         
@@ -320,21 +286,14 @@ def analyze_suspicious_activity(df):
                 extra_json = json.loads(extra_data)
                 risk_score = extra_json.get('risk_analysis_score', 1.0)
                 if risk_score > 0.7:  # High risk recaptcha
-                    failure = {
-                        'ip': ip,
-                        'risk_score': risk_score,
-                        'risk': 'HIGH',
-                        'explanation': f"High recaptcha risk score ({risk_score}) - potential automated activity"
-                    }
-                    analysis['recaptcha_failures'].append(failure)
-                    analysis['attack_indicators'].append(failure)
+                    analysis['recaptcha_failures'].append(ip)
         except:
             pass
     
     # Compile high risk IPs
     high_risk_ips = set()
-    for detection in analysis['bot_detections'] + analysis['recaptcha_failures']:
-        high_risk_ips.add(detection['ip'])
+    high_risk_ips.update(analysis['bot_detections'])
+    high_risk_ips.update(analysis['recaptcha_failures'])
     
     analysis['high_risk_ips'] = list(high_risk_ips)
     
@@ -518,9 +477,8 @@ def display_welcome_screen():
     ### 📊 What You'll Get
     - Executive summary with risk assessment
     - **Rule Categorization Table** with clear explanations
+    - **Top 10 Suspicious IPs** for login and signup
     - Platform-wise breakdown
-    - Top suspicious IPs to investigate
-    - Attack pattern detection
     - Success/failure rate analysis
     """)
 
@@ -568,6 +526,29 @@ def display_security_dashboard(assessment):
     
     st.markdown("---")
     
+    # SIMPLIFIED IP ANALYSIS - Just Top 10 Tables
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Top 10 Login IPs
+        if assessment.get('top_login_ips'):
+            st.subheader("🔐 Top 10 Login IPs")
+            login_ips_df = pd.DataFrame(assessment['top_login_ips'])
+            st.dataframe(login_ips_df, use_container_width=True)
+        else:
+            st.info("No login IP data available")
+    
+    with col2:
+        # Top 10 Signup IPs
+        if assessment.get('top_signup_ips'):
+            st.subheader("📝 Top 10 Signup IPs")
+            signup_ips_df = pd.DataFrame(assessment['top_signup_ips'])
+            st.dataframe(signup_ips_df, use_container_width=True)
+        else:
+            st.info("No signup IP data available")
+    
+    st.markdown("---")
+    
     # Detailed Analysis Sections
     col1, col2 = st.columns(2)
     
@@ -575,22 +556,14 @@ def display_security_dashboard(assessment):
         # Login Analysis
         if 'login_analysis' in assessment:
             display_login_analysis(assessment['login_analysis'])
-        
+    
+    with col2:
         # Signup Analysis  
         if 'signup_analysis' in assessment:
             display_signup_analysis(assessment['signup_analysis'])
-    
-    with col2:
-        # Suspicious Activity Analysis
-        if 'suspicious_analysis' in assessment:
-            display_suspicious_analysis(assessment['suspicious_analysis'])
         
         # Platform Breakdown
         display_platform_analysis(assessment)
-    
-    # Detailed IP Analysis
-    st.markdown("---")
-    display_detailed_ip_analysis(assessment)
 
 def display_login_analysis(analysis):
     """Display login analysis details with clear explanations"""
@@ -609,20 +582,6 @@ def display_login_analysis(analysis):
     
     with metrics_col3:
         st.metric("Failed Logins", f"{analysis.get('failed_requests', 0):,}")
-    
-    # Attack indicators with explanations
-    if analysis.get('attack_indicators'):
-        st.subheader("🚨 Login Attack Indicators")
-        for indicator in analysis['attack_indicators']:
-            risk_color = {"HIGH": "red", "MEDIUM": "orange", "LOW": "blue"}
-            color = risk_color.get(indicator['risk'], "gray")
-            
-            st.markdown(f"""
-            <div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">
-                <strong>IP: {indicator['ip']}</strong> | Risk: {indicator['risk']}<br>
-                {indicator['explanation']}
-            </div>
-            """, unsafe_allow_html=True)
 
 def display_signup_analysis(analysis):
     """Display signup analysis details with clear explanations"""
@@ -640,45 +599,6 @@ def display_signup_analysis(analysis):
     
     with metrics_col3:
         st.metric("Failed Signups", f"{analysis.get('failed_requests', 0):,}")
-    
-    # Attack indicators with explanations
-    if analysis.get('attack_indicators'):
-        st.subheader("🚨 Signup Attack Indicators")
-        for indicator in analysis['attack_indicators']:
-            risk_color = {"HIGH": "red", "MEDIUM": "orange", "LOW": "blue"}
-            color = risk_color.get(indicator['risk'], "gray")
-            
-            st.markdown(f"""
-            <div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">
-                <strong>IP: {indicator['ip']}</strong> | Risk: {indicator['risk']}<br>
-                {indicator['explanation']}
-            </div>
-            """, unsafe_allow_html=True)
-
-def display_suspicious_analysis(analysis):
-    """Display suspicious activity analysis with clear explanations"""
-    st.subheader("🕵️ Suspicious Activity Analysis")
-    
-    metrics_col1, metrics_col2 = st.columns(2)
-    
-    with metrics_col1:
-        st.metric("Total Alerts", f"{analysis.get('total_alerts', 0):,}")
-        st.metric("High-Risk IPs", f"{len(analysis.get('high_risk_ips', [])):,}")
-    
-    with metrics_col2:
-        st.metric("Bot Detections", f"{len(analysis.get('bot_detections', [])):,}")
-        st.metric("Recaptcha Failures", f"{len(analysis.get('recaptcha_failures', [])):,}")
-    
-    # Show detailed findings with explanations
-    if analysis.get('attack_indicators'):
-        st.subheader("🔍 Suspicious Activity Details")
-        for indicator in analysis['attack_indicators']:
-            st.markdown(f"""
-            <div style="border-left: 4px solid red; padding-left: 10px; margin: 5px 0;">
-                <strong>IP: {indicator['ip']}</strong><br>
-                {indicator['explanation']}
-            </div>
-            """, unsafe_allow_html=True)
 
 def display_platform_analysis(assessment):
     """Display platform-wise analysis"""
@@ -713,49 +633,6 @@ def display_platform_analysis(assessment):
             title="Request Distribution by Platform"
         )
         st.plotly_chart(fig, use_container_width=True)
-
-def display_detailed_ip_analysis(assessment):
-    """Display detailed IP analysis for investigation"""
-    st.subheader("🎯 Detailed IP Analysis for Investigation")
-    
-    # Compile all IPs with their risk reasons
-    all_ips = {}
-    
-    # Collect from all sources
-    for source_name, source_data in [('Login', assessment.get('login_analysis', {})),
-                                   ('Signup', assessment.get('signup_analysis', {})),
-                                   ('Suspicious', assessment.get('suspicious_analysis', {}))]:
-        
-        if 'attack_indicators' in source_data:
-            for indicator in source_data['attack_indicators']:
-                ip = indicator['ip']
-                if ip not in all_ips:
-                    all_ips[ip] = []
-                all_ips[ip].append({
-                    'source': source_name,
-                    'type': indicator['type'],
-                    'risk': indicator['risk'],
-                    'explanation': indicator.get('explanation', 'Suspicious activity detected')
-                })
-    
-    # Display IPs sorted by risk level
-    if all_ips:
-        st.info(f"Found {len(all_ips)} suspicious IPs across all data sources")
-        
-        for ip, events in sorted(all_ips.items(), key=lambda x: len(x[1]), reverse=True)[:20]:
-            with st.expander(f"`{ip}` - {len(events)} security events"):
-                for event in events:
-                    risk_color = {"HIGH": "red", "MEDIUM": "orange", "LOW": "blue"}
-                    color = risk_color.get(event['risk'], "gray")
-                    
-                    st.markdown(f"""
-                    <div style="border-left: 3px solid {color}; padding-left: 8px; margin: 3px 0;">
-                        <strong>{event['source']}</strong> | <span style="color: {color}">{event['risk']} Risk</span><br>
-                        {event['explanation']}
-                    </div>
-                    """, unsafe_allow_html=True)
-    else:
-        st.success("✅ No suspicious IPs detected in today's data.")
 
 if __name__ == "__main__":
     main()
