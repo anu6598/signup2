@@ -55,6 +55,9 @@ def normalize_dataframe(df_raw):
     # Parse extra_data_str if it exists
     if col_extra_data:
         df = parse_extra_data(df, col_extra_data)
+    else:
+        # Initialize recaptcha columns with default values if extra_data_str doesn't exist
+        df = initialize_recaptcha_columns(df)
 
     return df
 
@@ -81,7 +84,23 @@ def parse_extra_data(df, extra_data_col):
         
     except Exception as e:
         st.warning(f"Could not parse extra_data_str: {str(e)}")
+        # Initialize with default values if parsing fails
+        df = initialize_recaptcha_columns(df)
     
+    return df
+
+def initialize_recaptcha_columns(df):
+    """Initialize recaptcha columns with default values"""
+    df['recaptcha_valid'] = True
+    df['recaptcha_actions'] = [[] for _ in range(len(df))]
+    df['response_action'] = ''
+    df['risk_analysis_score'] = 0.0
+    df['reasons'] = ''
+    df['invalid_reason'] = ''
+    df['country_code'] = ''
+    df['high_risk_recaptcha'] = False
+    df['suspicious_environment'] = False
+    df['failed_recaptcha'] = False
     return df
 
 def prepare_hourly_data(df):
@@ -111,21 +130,42 @@ def analyze_brute_force_patterns(df):
     # Prepare data with hourly buckets
     df = prepare_hourly_data(df)
     
-    # 🎯 HOURLY IP ANALYSIS
-    hourly_ip_analysis = df.groupby(['date', 'hour_bucket', 'ip_address', 'platform']).agg({
+    # Define aggregation columns safely
+    agg_columns = {
         'timestamp': 'count',
         'username': 'nunique',
         'device_id': 'nunique',
-        'is_proxy': 'mean',
-        'risk_analysis_score': 'mean',
-        'high_risk_recaptcha': 'sum',
-        'suspicious_environment': 'sum',
-        'failed_recaptcha': 'sum'
-    }).reset_index()
+        'is_proxy': 'mean'
+    }
     
-    hourly_ip_analysis.columns = ['date', 'hour_bucket', 'ip_address', 'platform', 'request_count', 
-                                 'unique_users', 'unique_devices', 'proxy_ratio', 'avg_risk_score',
-                                 'high_risk_count', 'suspicious_env_count', 'failed_recaptcha_count']
+    # Add recaptcha columns only if they exist
+    if 'risk_analysis_score' in df.columns:
+        agg_columns['risk_analysis_score'] = 'mean'
+    if 'high_risk_recaptcha' in df.columns:
+        agg_columns['high_risk_recaptcha'] = 'sum'
+    if 'suspicious_environment' in df.columns:
+        agg_columns['suspicious_environment'] = 'sum'
+    if 'failed_recaptcha' in df.columns:
+        agg_columns['failed_recaptcha'] = 'sum'
+    
+    # 🎯 HOURLY IP ANALYSIS
+    hourly_ip_analysis = df.groupby(['date', 'hour_bucket', 'ip_address', 'platform']).agg(agg_columns).reset_index()
+    
+    # Rename columns safely
+    base_columns = ['date', 'hour_bucket', 'ip_address', 'platform', 'request_count', 
+                   'unique_users', 'unique_devices', 'proxy_ratio']
+    
+    additional_columns = []
+    if 'risk_analysis_score' in agg_columns:
+        additional_columns.append('avg_risk_score')
+    if 'high_risk_recaptcha' in agg_columns:
+        additional_columns.append('high_risk_count')
+    if 'suspicious_environment' in agg_columns:
+        additional_columns.append('suspicious_env_count')
+    if 'failed_recaptcha' in agg_columns:
+        additional_columns.append('failed_recaptcha_count')
+    
+    hourly_ip_analysis.columns = base_columns + additional_columns
     
     # 🎯 BRUTE FORCE DETECTION RULES
     suspicious_ips = []
@@ -166,23 +206,26 @@ def analyze_brute_force_patterns(df):
         hour_count = len(hour_data)
         sustained_score = min(2, hour_count // 3)  # 2 points for 6+ hours
         
-        # Rule 6: Recaptcha risk scoring
+        # Rule 6: Recaptcha risk scoring (only if available)
         recaptcha_score = 0
-        if row['avg_risk_score'] > 0.7:
-            recaptcha_score = 3
-        elif row['avg_risk_score'] > 0.4:
-            recaptcha_score = 2
-        elif row['avg_risk_score'] > 0.2:
-            recaptcha_score = 1
+        failed_recaptcha_score = 0
         
-        # Rule 7: Failed recaptcha attempts
-        failed_recaptcha_score = min(2, row['failed_recaptcha_count'])
+        if 'avg_risk_score' in row:
+            if row['avg_risk_score'] > 0.7:
+                recaptcha_score = 3
+            elif row['avg_risk_score'] > 0.4:
+                recaptcha_score = 2
+            elif row['avg_risk_score'] > 0.2:
+                recaptcha_score = 1
+        
+        if 'failed_recaptcha_count' in row:
+            failed_recaptcha_score = min(2, row['failed_recaptcha_count'])
         
         total_score = (volume_score + user_score + device_score + proxy_score + 
                       sustained_score + recaptcha_score + failed_recaptcha_score)
         
         if total_score >= 4:  # Threshold for suspicion
-            suspicious_ips.append({
+            ip_data = {
                 'ip_address': ip,
                 'platform': row['platform'],
                 'date': row['date'],
@@ -191,10 +234,6 @@ def analyze_brute_force_patterns(df):
                 'unique_users': row['unique_users'],
                 'unique_devices': row['unique_devices'],
                 'proxy_ratio': f"{row['proxy_ratio']:.1%}",
-                'avg_risk_score': f"{row['avg_risk_score']:.3f}",
-                'high_risk_count': row['high_risk_count'],
-                'suspicious_env_count': row['suspicious_env_count'],
-                'failed_recaptcha_count': row['failed_recaptcha_count'],
                 'volume_score': volume_score,
                 'user_score': user_score,
                 'device_score': device_score,
@@ -204,7 +243,19 @@ def analyze_brute_force_patterns(df):
                 'failed_recaptcha_score': failed_recaptcha_score,
                 'total_risk_score': total_score,
                 'risk_level': 'CRITICAL' if total_score >= 8 else 'HIGH' if total_score >= 5 else 'MEDIUM'
-            })
+            }
+            
+            # Add recaptcha data only if available
+            if 'avg_risk_score' in row:
+                ip_data['avg_risk_score'] = f"{row['avg_risk_score']:.3f}"
+            if 'high_risk_count' in row:
+                ip_data['high_risk_count'] = row['high_risk_count']
+            if 'suspicious_env_count' in row:
+                ip_data['suspicious_env_count'] = row['suspicious_env_count']
+            if 'failed_recaptcha_count' in row:
+                ip_data['failed_recaptcha_count'] = row['failed_recaptcha_count']
+            
+            suspicious_ips.append(ip_data)
     
     suspicious_df = pd.DataFrame(suspicious_ips)
     
@@ -219,11 +270,21 @@ def detect_advanced_patterns(df):
     
     # Pattern 1: Rapid succession attempts (same IP, different users)
     if 'username' in df.columns:
-        user_switching = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg({
-            'username': ['count', 'nunique'],
-            'risk_analysis_score': 'mean'
-        }).reset_index()
-        user_switching.columns = ['ip_address', 'hour_bucket', 'platform', 'total_attempts', 'unique_users', 'avg_risk_score']
+        agg_columns = {
+            'username': ['count', 'nunique']
+        }
+        if 'risk_analysis_score' in df.columns:
+            agg_columns['risk_analysis_score'] = 'mean'
+            
+        user_switching = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg(agg_columns).reset_index()
+        
+        # Handle column names safely
+        if 'risk_analysis_score' in agg_columns:
+            user_switching.columns = ['ip_address', 'hour_bucket', 'platform', 'total_attempts', 'unique_users', 'avg_risk_score']
+        else:
+            user_switching.columns = ['ip_address', 'hour_bucket', 'platform', 'total_attempts', 'unique_users']
+            user_switching['avg_risk_score'] = 0.0
+            
         user_switching['user_switch_ratio'] = user_switching['unique_users'] / user_switching['total_attempts']
         
         high_switching = user_switching[
@@ -232,45 +293,75 @@ def detect_advanced_patterns(df):
         ]
         
         for _, row in high_switching.iterrows():
-            patterns.append({
+            pattern_data = {
                 'pattern_type': 'CREDENTIAL_STUFFING',
                 'ip_address': row['ip_address'],
                 'platform': row['platform'],
                 'hour_bucket': row['hour_bucket'],
                 'metric': f"High user switching ({row['user_switch_ratio']:.1%})",
                 'attempts': row['total_attempts'],
-                'unique_users': row['unique_users'],
-                'avg_risk_score': f"{row['avg_risk_score']:.3f}"
-            })
+                'unique_users': row['unique_users']
+            }
+            if 'avg_risk_score' in row:
+                pattern_data['avg_risk_score'] = f"{row['avg_risk_score']:.3f}"
+            patterns.append(pattern_data)
     
     # Pattern 2: Distributed attacks (multiple IPs, same user)
     if 'username' in df.columns:
-        user_targeting = df.groupby(['username', 'hour_bucket', 'platform']).agg({
-            'ip_address': 'nunique',
-            'risk_analysis_score': 'mean'
-        }).reset_index()
-        user_targeting.columns = ['username', 'hour_bucket', 'platform', 'unique_ips', 'avg_risk_score']
+        agg_columns = {
+            'ip_address': 'nunique'
+        }
+        if 'risk_analysis_score' in df.columns:
+            agg_columns['risk_analysis_score'] = 'mean'
+            
+        user_targeting = df.groupby(['username', 'hour_bucket', 'platform']).agg(agg_columns).reset_index()
+        
+        if 'risk_analysis_score' in agg_columns:
+            user_targeting.columns = ['username', 'hour_bucket', 'platform', 'unique_ips', 'avg_risk_score']
+        else:
+            user_targeting.columns = ['username', 'hour_bucket', 'platform', 'unique_ips']
+            user_targeting['avg_risk_score'] = 0.0
         
         high_targeting = user_targeting[user_targeting['unique_ips'] > 3]
         
         for _, row in high_targeting.iterrows():
-            patterns.append({
+            pattern_data = {
                 'pattern_type': 'DISTRIBUTED_ATTACK',
                 'username': row['username'],
                 'platform': row['platform'],
                 'hour_bucket': row['hour_bucket'],
                 'metric': f"Multiple source IPs ({row['unique_ips']})",
-                'unique_ips': row['unique_ips'],
-                'avg_risk_score': f"{row['avg_risk_score']:.3f}"
-            })
+                'unique_ips': row['unique_ips']
+            }
+            if 'avg_risk_score' in row:
+                pattern_data['avg_risk_score'] = f"{row['avg_risk_score']:.3f}"
+            patterns.append(pattern_data)
     
     # Pattern 3: High frequency attempts from single IP
-    ip_frequency = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg({
-        'timestamp': 'count',
-        'risk_analysis_score': 'mean',
-        'failed_recaptcha': 'sum'
-    }).reset_index()
-    ip_frequency.columns = ['ip_address', 'hour_bucket', 'platform', 'attempt_count', 'avg_risk_score', 'failed_recaptcha_count']
+    agg_columns = {
+        'timestamp': 'count'
+    }
+    if 'risk_analysis_score' in df.columns:
+        agg_columns['risk_analysis_score'] = 'mean'
+    if 'failed_recaptcha' in df.columns:
+        agg_columns['failed_recaptcha'] = 'sum'
+        
+    ip_frequency = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg(agg_columns).reset_index()
+    
+    # Handle column names based on available columns
+    column_names = ['ip_address', 'hour_bucket', 'platform', 'attempt_count']
+    if 'risk_analysis_score' in agg_columns:
+        column_names.append('avg_risk_score')
+    if 'failed_recaptcha' in agg_columns:
+        column_names.append('failed_recaptcha_count')
+        
+    ip_frequency.columns = column_names
+    
+    # Add missing columns with default values
+    if 'avg_risk_score' not in ip_frequency.columns:
+        ip_frequency['avg_risk_score'] = 0.0
+    if 'failed_recaptcha_count' not in ip_frequency.columns:
+        ip_frequency['failed_recaptcha_count'] = 0
     
     high_frequency = ip_frequency[ip_frequency['attempt_count'] > 20]
     
@@ -286,8 +377,8 @@ def detect_advanced_patterns(df):
             'failed_recaptcha_count': row['failed_recaptcha_count']
         })
     
-    # Pattern 4: High risk recaptcha patterns
-    if 'high_risk_recaptcha' in df.columns:
+    # Pattern 4: High risk recaptcha patterns (only if columns exist)
+    if all(col in df.columns for col in ['high_risk_recaptcha', 'suspicious_environment', 'risk_analysis_score']):
         high_risk_patterns = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg({
             'high_risk_recaptcha': 'sum',
             'suspicious_environment': 'sum',
@@ -334,10 +425,18 @@ def create_rule_categorization_table(df):
         max_requests_ip = group['ip_address'].value_counts().max() if 'ip_address' in group.columns else 0
         max_requests_device = group['device_id'].value_counts().max() if 'device_id' in group.columns else 0
         
-        # Recaptcha risk metrics
-        avg_risk_score = group['risk_analysis_score'].mean() if 'risk_analysis_score' in group.columns else 0
-        high_risk_count = group['high_risk_recaptcha'].sum() if 'high_risk_recaptcha' in group.columns else 0
-        suspicious_env_count = group['suspicious_environment'].sum() if 'suspicious_environment' in group.columns else 0
+        # Initialize recaptcha metrics with defaults
+        avg_risk_score = 0.0
+        high_risk_count = 0
+        suspicious_env_count = 0
+        
+        # Only calculate if columns exist
+        if 'risk_analysis_score' in group.columns:
+            avg_risk_score = group['risk_analysis_score'].mean()
+        if 'high_risk_recaptcha' in group.columns:
+            high_risk_count = group['high_risk_recaptcha'].sum()
+        if 'suspicious_environment' in group.columns:
+            suspicious_env_count = group['suspicious_environment'].sum()
         
         # Proxy ratio calculation
         if "akamai_epd" in group.columns:
@@ -366,7 +465,7 @@ def create_rule_categorization_table(df):
             category = "No suspicious activity detected"
             risk_level = "NORMAL"
 
-        final_categories.append({
+        category_data = {
             "date": day,
             "category": category,
             "risk_level": risk_level,
@@ -377,7 +476,9 @@ def create_rule_categorization_table(df):
             "avg_risk_score": f"{avg_risk_score:.3f}",
             "high_risk_recaptcha": high_risk_count,
             "suspicious_environment": suspicious_env_count
-        })
+        }
+
+        final_categories.append(category_data)
 
     return final_categories
 
@@ -453,13 +554,13 @@ def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patte
     # Suspicious IPs Table
     st.subheader("🔍 Suspicious IPs - Hourly Analysis")
     if not suspicious_ips.empty and 'risk_level' in suspicious_ips.columns:
-        # Sort by risk score and show details
-        display_cols = ['ip_address', 'platform', 'hour_bucket', 'request_count', 'unique_users', 
-                       'unique_devices', 'proxy_ratio', 'avg_risk_score', 'high_risk_count',
-                       'suspicious_env_count', 'failed_recaptcha_count', 'total_risk_score', 'risk_level']
+        # Define base columns that should always exist
+        base_cols = ['ip_address', 'platform', 'hour_bucket', 'request_count', 'unique_users', 
+                    'unique_devices', 'proxy_ratio', 'total_risk_score', 'risk_level']
         
-        # Only use columns that actually exist
-        available_cols = [col for col in display_cols if col in suspicious_ips.columns]
+        # Add optional columns only if they exist
+        optional_cols = ['avg_risk_score', 'high_risk_count', 'suspicious_env_count', 'failed_recaptcha_count']
+        available_cols = base_cols + [col for col in optional_cols if col in suspicious_ips.columns]
         
         suspicious_display = suspicious_ips[available_cols].sort_values(['total_risk_score', 'request_count'], ascending=False)
         st.dataframe(suspicious_display, use_container_width=True)
@@ -503,9 +604,13 @@ def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patte
         # Aggregate by hour
         hourly_trends = hourly_analysis.groupby('hour_bucket').agg({
             'request_count': 'sum',
-            'ip_address': 'nunique',
-            'avg_risk_score': 'mean'
+            'ip_address': 'nunique'
         }).reset_index()
+        
+        # Add risk score if available
+        if 'avg_risk_score' in hourly_analysis.columns:
+            risk_trends = hourly_analysis.groupby('hour_bucket')['avg_risk_score'].mean().reset_index()
+            hourly_trends = hourly_trends.merge(risk_trends, on='hour_bucket')
         
         col1, col2 = st.columns(2)
         
@@ -515,9 +620,16 @@ def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patte
             st.plotly_chart(fig_requests, use_container_width=True)
         
         with col2:
-            fig_risk = px.line(hourly_trends, x='hour_bucket', y='avg_risk_score',
-                             title='Average Risk Score by Hour')
-            st.plotly_chart(fig_risk, use_container_width=True)
+            if 'avg_risk_score' in hourly_trends.columns:
+                fig_risk = px.line(hourly_trends, x='hour_bucket', y='avg_risk_score',
+                                 title='Average Risk Score by Hour')
+                st.plotly_chart(fig_risk, use_container_width=True)
+            else:
+                fig_ips = px.line(hourly_trends, x='hour_bucket', y='ip_address',
+                                title='Unique IPs by Hour')
+                st.plotly_chart(fig_ips, use_container_width=True)
+
+# ... (rest of the functions remain the same as previous version)
 
 def create_ip_behavior_analysis(df):
     """Analyze IP behavior patterns including recaptcha data"""
@@ -527,22 +639,43 @@ def create_ip_behavior_analysis(df):
     # Prepare data first
     df = prepare_hourly_data(df)
     
-    # Group by IP and analyze behavior
-    ip_behavior = df.groupby(['ip_address', 'platform']).agg({
+    # Define aggregation columns safely
+    agg_columns = {
         'timestamp': ['count', lambda x: (x.max() - x.min()).total_seconds() / 3600],
         'username': 'nunique',
         'device_id': 'nunique',
         'is_proxy': 'mean',
-        'hour_bucket': 'nunique',
-        'risk_analysis_score': 'mean',
-        'high_risk_recaptcha': 'sum',
-        'suspicious_environment': 'sum',
-        'failed_recaptcha': 'sum'
-    }).reset_index()
+        'hour_bucket': 'nunique'
+    }
     
-    ip_behavior.columns = ['ip_address', 'platform', 'total_requests', 'activity_hours', 
-                          'unique_users', 'unique_devices', 'proxy_ratio', 'unique_hours',
-                          'avg_risk_score', 'high_risk_count', 'suspicious_env_count', 'failed_recaptcha_count']
+    # Add recaptcha columns only if they exist
+    if 'risk_analysis_score' in df.columns:
+        agg_columns['risk_analysis_score'] = 'mean'
+    if 'high_risk_recaptcha' in df.columns:
+        agg_columns['high_risk_recaptcha'] = 'sum'
+    if 'suspicious_environment' in df.columns:
+        agg_columns['suspicious_environment'] = 'sum'
+    if 'failed_recaptcha' in df.columns:
+        agg_columns['failed_recaptcha'] = 'sum'
+    
+    # Group by IP and analyze behavior
+    ip_behavior = df.groupby(['ip_address', 'platform']).agg(agg_columns).reset_index()
+    
+    # Handle column names safely
+    base_columns = ['ip_address', 'platform', 'total_requests', 'activity_hours', 
+                   'unique_users', 'unique_devices', 'proxy_ratio', 'unique_hours']
+    
+    additional_columns = []
+    if 'risk_analysis_score' in agg_columns:
+        additional_columns.append('avg_risk_score')
+    if 'high_risk_recaptcha' in agg_columns:
+        additional_columns.append('high_risk_count')
+    if 'suspicious_environment' in agg_columns:
+        additional_columns.append('suspicious_env_count')
+    if 'failed_recaptcha' in agg_columns:
+        additional_columns.append('failed_recaptcha_count')
+    
+    ip_behavior.columns = base_columns + additional_columns
     
     # Calculate requests per hour
     ip_behavior['requests_per_hour'] = ip_behavior['total_requests'] / ip_behavior['activity_hours'].clip(lower=1)
@@ -559,9 +692,12 @@ def create_ip_behavior_analysis(df):
     ip_behavior['sustained_score'] = np.where(ip_behavior['unique_hours'] > 6, 2,
                                             np.where(ip_behavior['unique_hours'] > 3, 1, 0))
     
-    ip_behavior['recaptcha_score'] = np.where(ip_behavior['avg_risk_score'] > 0.7, 3,
-                                            np.where(ip_behavior['avg_risk_score'] > 0.4, 2,
-                                                   np.where(ip_behavior['avg_risk_score'] > 0.2, 1, 0)))
+    # Recaptcha scoring (only if available)
+    ip_behavior['recaptcha_score'] = 0
+    if 'avg_risk_score' in ip_behavior.columns:
+        ip_behavior['recaptcha_score'] = np.where(ip_behavior['avg_risk_score'] > 0.7, 3,
+                                                np.where(ip_behavior['avg_risk_score'] > 0.4, 2,
+                                                       np.where(ip_behavior['avg_risk_score'] > 0.2, 1, 0)))
     
     ip_behavior['total_risk_score'] = (ip_behavior['volume_score'] + 
                                      ip_behavior['user_diversity_score'] + 
@@ -617,9 +753,8 @@ def display_suspicious_activity_log(suspicious_df):
     else:
         st.info("No suspicious activity log data uploaded")
 
-# ------------------------------
-# Main Application
-# ------------------------------
+# ... (main function and display functions remain the same as previous version)
+
 def main():
     st.sidebar.title("🔐 Brute Force Detection Dashboard")
     
@@ -724,7 +859,7 @@ def display_analysis_dashboard(df, suspicious_df, min_requests, risk_threshold):
     else:
         selected_platforms = []
     
-    # Risk Score Filter
+    # Risk Score Filter (only if column exists)
     if 'risk_analysis_score' in df.columns:
         min_risk = st.sidebar.slider(
             "Minimum Risk Score:",
@@ -774,6 +909,8 @@ def display_analysis_dashboard(df, suspicious_df, min_requests, risk_threshold):
             high_risk = len(filtered_df[filtered_df['risk_analysis_score'] > 0.7])
             st.metric("Avg Risk Score", f"{avg_risk:.3f}")
             st.metric("High Risk Entries", high_risk)
+        else:
+            st.metric("Recaptcha Data", "Not Available")
     
     st.markdown("---")
     
@@ -793,11 +930,11 @@ def display_analysis_dashboard(df, suspicious_df, min_requests, risk_threshold):
         st.header("📊 IP Behavior Analysis (Top 20)")
         
         display_cols = ['ip_address', 'platform', 'total_requests', 'activity_hours', 'requests_per_hour',
-                       'unique_users', 'unique_devices', 'proxy_ratio', 'avg_risk_score', 
-                       'high_risk_count', 'suspicious_env_count', 'total_risk_score', 'risk_level']
+                       'unique_users', 'unique_devices', 'proxy_ratio', 'total_risk_score', 'risk_level']
         
-        # Only use columns that exist
-        available_cols = [col for col in display_cols if col in ip_behavior.columns]
+        # Add optional columns only if they exist
+        optional_cols = ['avg_risk_score', 'high_risk_count', 'suspicious_env_count']
+        available_cols = display_cols + [col for col in optional_cols if col in ip_behavior.columns]
         
         st.dataframe(ip_behavior[available_cols], use_container_width=True)
         
