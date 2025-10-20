@@ -4,14 +4,16 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from sklearn.ensemble import IsolationForest
+from sklearn.neighbors import NearestNeighbors
 from datetime import datetime, timedelta
-import json
 import re
+import json
 
-st.set_page_config(layout="wide", page_title="Security Intelligence Dashboard")
+st.set_page_config(page_title="Security Intelligence Dashboard", layout="wide")
 
 # ------------------------------
-# Enhanced Security Analysis Functions
+# Helper functions
 # ------------------------------
 def normalize_dataframe(df_raw):
     """Normalize column names and ensure consistent formatting"""
@@ -19,143 +21,76 @@ def normalize_dataframe(df_raw):
     df_raw.rename(columns=cols_map, inplace=True)
     df = df_raw.copy()
 
-    # Ensure critical columns exist
-    if 'start_time' in df.columns:
-        df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
-        df['timestamp'] = df['start_time']
-        df['date'] = df['start_time'].dt.date
-    
-    if 'timestamp' in df.columns and 'date' not in df.columns:
-        df['date'] = pd.to_datetime(df['timestamp']).dt.date
-    
-    # Platform detection
-    if 'dr_platform' in df.columns:
-        df['platform'] = df['dr_platform'].fillna('web')
-    elif 'user_agent' in df.columns:
-        df['platform'] = df['user_agent'].apply(detect_platform_from_ua)
-    else:
-        df['platform'] = 'unknown'
-    
-    # Ensure true_client_ip column exists
-    if 'true_client_ip' not in df.columns:
-        # Try to find IP column
-        ip_col = None
-        for col in ['x_real_ip', 'client_ip', 'ip', 'remote_addr']:
-            if col in df.columns:
-                ip_col = col
-                break
-        if ip_col:
-            df['true_client_ip'] = df[ip_col].astype(str)
-        else:
-            df['true_client_ip'] = 'unknown'
-    
+    # Pick columns dynamically
+    def pick_col(possible):
+        for p in possible:
+            if p in df.columns:
+                return p
+        return None
+
+    col_ip = pick_col(["x_real_ip", "client_ip", "ip", "remote_addr", "true_client_ip"])
+    col_device = pick_col(["dr_dv", "device_id", "device"])
+    col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
+
+    df["x_real_ip"] = df[col_ip].astype(str) if col_ip else "unknown"
+    df["true_client_ip"] = df["x_real_ip"]  # Ensure true_client_ip exists
+    df["dr_dv"] = df[col_device].astype(str) if col_device else np.nan
+    df["akamai_epd"] = df[col_akamai_epd] if col_akamai_epd else np.nan
+    df["is_proxy"] = df["akamai_epd"].notna() & (df["akamai_epd"] != "")
+
     return df
 
-def detect_platform_from_ua(user_agent):
-    """Detect platform from user agent string"""
-    if not isinstance(user_agent, str):
-        return 'unknown'
-    ua = user_agent.lower()
-    if 'android' in ua:
-        return 'android'
-    elif 'ios' in ua or 'iphone' in ua:
-        return 'ios'
-    elif 'mozilla' in ua or 'chrome' in ua or 'safari' in ua:
-        return 'web'
-    else:
-        return 'other'
+def parse_time_columns(df, time_col="start_time"):
+    df = df.copy()
+    df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+    df = df.dropna(subset=[time_col])
+    # Formats used for aggregation labels
+    df['hour_label'] = df[time_col].dt.strftime('%H')
+    df['minute_label'] = df[time_col].dt.strftime('%H:%M')
+    df['second_label'] = df[time_col].dt.strftime('%H:%M:%S')
+    return df
 
-def analyze_request_success(df, request_type):
-    """Analyze successful vs unsuccessful requests"""
-    if 'response_code' not in df.columns:
-        return {}
-    
-    if request_type == 'login':
-        login_df = df[df['request_path'].str.contains('/login', na=False)]
-        success_codes = [200, 201]
-        failed_codes = [400, 401, 403, 404, 422, 429, 500]
-    elif request_type == 'signup':
-        login_df = df[df['request_path'].str.contains('/signup', na=False)]
-        success_codes = [200, 201]
-        failed_codes = [400, 409, 422, 429, 500]
-    else:
-        return {}
-    
-    successful = login_df[login_df['response_code'].isin(success_codes)]
-    failed = login_df[login_df['response_code'].isin(failed_codes)]
-    
-    analysis = {
-        'request_type': request_type,
-        'total_requests': len(login_df),
-        'successful_requests': len(successful),
-        'failed_requests': len(failed),
-        'success_rate': len(successful) / len(login_df) * 100 if len(login_df) > 0 else 0,
-        'unique_ips': login_df['true_client_ip'].nunique() if 'true_client_ip' in login_df.columns else 0,
-        'unique_successful_ips': successful['true_client_ip'].nunique() if 'true_client_ip' in successful.columns else 0,
-        'unique_failed_ips': failed['true_client_ip'].nunique() if 'true_client_ip' in failed.columns else 0
-    }
-    
-    return analysis
+def collapse_ip(ip, mask_octets=1):
+    """Collapse IP into ranges by masking last N octets."""
+    if not isinstance(ip, str) or "." not in ip:
+        return ip
+    parts = ip.split(".")
+    for i in range(1, mask_octets+1):
+        if len(parts) >= i:
+            parts[-i] = "*"
+    return ".".join(parts)
 
-def enhanced_security_assessment(login_df, signup_df, suspicious_df=None):
-    """Comprehensive security assessment with clear risk categorization"""
-    
-    # Initialize results
-    assessment = {
-        'date': datetime.now().date(),
-        'overall_risk': 'LOW',
-        'critical_findings': [],
-        'suspicious_ips': [],
-        'platform_analysis': {},
-        'attack_indicators': {},
-        'rule_categorization': [],
-        'top_login_ips': [],
-        'top_signup_ips': []
-    }
-    
-    # Analyze login data
-    if login_df is not None and not login_df.empty:
-        login_analysis = analyze_login_patterns(login_df)
-        assessment['login_analysis'] = login_analysis
-        assessment['top_login_ips'] = login_analysis.get('top_ips', [])
-    
-    # Analyze signup data  
-    if signup_df is not None and not signup_df.empty:
-        signup_analysis = analyze_signup_patterns(signup_df)
-        assessment['signup_analysis'] = signup_analysis
-        assessment['top_signup_ips'] = signup_analysis.get('top_ips', [])
-    
-    # Analyze suspicious activity
-    if suspicious_df is not None and not suspicious_df.empty:
-        suspicious_analysis = analyze_suspicious_activity(suspicious_df)
-        assessment['suspicious_analysis'] = suspicious_analysis
-        assessment['suspicious_ips'].extend(suspicious_analysis.get('high_risk_ips', []))
-    
-    # Apply Rule Categorization (from your original code)
-    assessment = apply_rule_categorization(assessment, login_df, signup_df)
-    
-    # Determine overall risk
-    assessment = calculate_overall_risk(assessment)
-    
-    return assessment
+def explain_rule_row(row, rule_name):
+    if rule_name == '15min_>9':
+        return f"IP {row['true_client_ip']} had {row['count_15min']} /user/signup calls within 15 minutes — exceeds threshold 9."
+    if rule_name == '10min_>=5':
+        return f"IP {row['true_client_ip']} had {row['count_10min']} /user/signup calls within 10 minutes — meets/exceeds threshold 5."
+    return "Rule triggered."
 
-def apply_rule_categorization(assessment, login_df, signup_df):
-    """Apply the rule categorization table from your original code"""
-    
-    # Combine login and signup data for OTP analysis
-    combined_df = pd.concat([login_df, signup_df]) if login_df is not None and signup_df is not None else login_df if login_df is not None else signup_df
-    
-    if combined_df is None or combined_df.empty:
-        return assessment
-    
-    # Group by date for daily analysis
-    if 'date' in combined_df.columns:
-        date_groups = combined_df.groupby('date')
-    else:
-        # If no date column, treat as single day
-        date_groups = [("All Data", combined_df)]
+def explain_ml_row(row, median_15, median_10):
+    reasons = []
+    if row['count_15min'] > median_15 * 2:
+        reasons.append(f"High 15-min count ({row['count_15min']}) >> median {median_15:.1f}")
+    if row['count_10min'] > median_10 * 2:
+        reasons.append(f"High 10-min count ({row['count_10min']}) >> median {median_10:.1f}")
+    if (row.get('akamai_bot') is not None) and (str(row.get('akamai_bot')).lower() != '-' and 'bot' in str(row.get('akamai_bot')).lower()):
+        reasons.append("Akamai bot indicator present")
+    if not reasons:
+        reasons.append("Statistical outlier detected by IsolationForest on (count_15min, count_10min).")
+    return "; ".join(reasons)
+
+def apply_rule_categorization(df):
+    """Apply the rule categorization table"""
+    if df is None or df.empty:
+        return []
     
     final_categories = []
+    
+    # Group by date for daily analysis
+    if 'date' in df.columns:
+        date_groups = df.groupby('date')
+    else:
+        date_groups = [("All Data", df)]
     
     for day, group in date_groups:
         total_otps = len(group)
@@ -171,7 +106,7 @@ def apply_rule_categorization(assessment, login_df, signup_df):
         else:
             proxy_ratio = 0
 
-        # 🎯 RULE CATEGORIZATION TABLE (From your original code)
+        # 🎯 RULE CATEGORIZATION TABLE
         if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 20) and (max_requests_device > 15):
             category = "🚨 CRITICAL: OTP Abuse/Attack Detected"
             risk_level = "CRITICAL"
@@ -200,61 +135,10 @@ def apply_rule_categorization(assessment, login_df, signup_df):
             "proxy_ratio": f"{proxy_ratio:.1f}%"
         })
 
-    assessment['rule_categorization'] = final_categories
-    return assessment
-
-def analyze_login_patterns(df):
-    """Enhanced login pattern analysis with clear explanations"""
-    analysis = {
-        'total_logins': len(df),
-        'unique_ips': df['true_client_ip'].nunique() if 'true_client_ip' in df.columns else 0,
-        'platform_breakdown': df['platform'].value_counts().to_dict() if 'platform' in df.columns else {},
-        'top_ips': []
-    }
-    
-    # Success rate analysis
-    success_analysis = analyze_request_success(df, 'login')
-    analysis.update(success_analysis)
-    
-    # Get top 10 IPs by request count
-    if 'true_client_ip' in df.columns:
-        ip_counts = df['true_client_ip'].value_counts().head(10)
-        for ip, count in ip_counts.items():
-            analysis['top_ips'].append({
-                'ip': ip,
-                'count': count,
-                'type': 'LOGIN_ATTEMPTS'
-            })
-    
-    return analysis
-
-def analyze_signup_patterns(df):
-    """Enhanced signup pattern analysis with clear explanations"""
-    analysis = {
-        'total_signups': len(df),
-        'unique_ips': df['true_client_ip'].nunique() if 'true_client_ip' in df.columns else 0,
-        'platform_breakdown': df['platform'].value_counts().to_dict() if 'platform' in df.columns else {},
-        'top_ips': []
-    }
-    
-    # Success rate analysis
-    success_analysis = analyze_request_success(df, 'signup')
-    analysis.update(success_analysis)
-    
-    # Get top 10 IPs by request count
-    if 'true_client_ip' in df.columns:
-        ip_counts = df['true_client_ip'].value_counts().head(10)
-        for ip, count in ip_counts.items():
-            analysis['top_ips'].append({
-                'ip': ip,
-                'count': count,
-                'type': 'SIGNUP_ATTEMPTS'
-            })
-    
-    return analysis
+    return final_categories
 
 def analyze_suspicious_activity(df):
-    """Analyze suspicious activity logs with clear correlation"""
+    """Analyze suspicious activity logs"""
     analysis = {
         'total_alerts': len(df),
         'high_risk_ips': [],
@@ -299,100 +183,6 @@ def analyze_suspicious_activity(df):
     
     return analysis
 
-def calculate_overall_risk(assessment):
-    """Calculate overall risk level based on all indicators"""
-    risk_score = 0
-    critical_findings = []
-    
-    # Rule categorization risk
-    for category in assessment.get('rule_categorization', []):
-        if category['risk_level'] == 'CRITICAL':
-            risk_score += 3
-            critical_findings.append(f"CRITICAL: {category['explanation']}")
-        elif category['risk_level'] == 'HIGH':
-            risk_score += 2
-            critical_findings.append(f"HIGH: {category['explanation']}")
-    
-    # Login risk factors
-    if 'login_analysis' in assessment:
-        login = assessment['login_analysis']
-        if login.get('failed_requests', 0) > 1000:
-            risk_score += 3
-            critical_findings.append("High volume of failed logins detected")
-        if login.get('success_rate', 100) < 30:
-            risk_score += 2
-            critical_findings.append("Very low login success rate")
-    
-    # Signup risk factors  
-    if 'signup_analysis' in assessment:
-        signup = assessment['signup_analysis']
-        if signup.get('failed_requests', 0) > 500:
-            risk_score += 2
-            critical_findings.append("High volume of failed signups")
-    
-    # Suspicious activity risk factors
-    if 'suspicious_analysis' in assessment:
-        suspicious = assessment['suspicious_analysis']
-        if len(suspicious.get('high_risk_ips', [])) > 10:
-            risk_score += 3
-            critical_findings.append("Multiple high-risk IPs detected")
-        if len(suspicious.get('bot_detections', [])) > 5:
-            risk_score += 2
-            critical_findings.append("Multiple bot detections")
-    
-    # Determine overall risk
-    if risk_score >= 5:
-        assessment['overall_risk'] = 'HIGH'
-    elif risk_score >= 3:
-        assessment['overall_risk'] = 'MEDIUM'
-    else:
-        assessment['overall_risk'] = 'LOW'
-    
-    assessment['critical_findings'] = critical_findings
-    assessment['risk_score'] = risk_score
-    
-    return assessment
-
-def create_executive_summary(assessment):
-    """Create a clear executive summary for team review"""
-    
-    risk_colors = {
-        'HIGH': '🔴',
-        'MEDIUM': '🟡', 
-        'LOW': '🟢'
-    }
-    
-    summary = f"""
-# {risk_colors[assessment['overall_risk']]} Security Intelligence Report
-**Date:** {assessment['date']} | **Overall Risk:** {assessment['overall_risk']}
-
-## 📊 Quick Overview
-"""
-    
-    # Add key metrics
-    if 'login_analysis' in assessment:
-        login = assessment['login_analysis']
-        summary += f"""
-- **Login Activity:** {login.get('total_logins', 0):,} total | {login.get('success_rate', 0):.1f}% success rate
-- **Unique IPs (Login):** {login.get('unique_ips', 0):,}
-"""
-    
-    if 'signup_analysis' in assessment:
-        signup = assessment['signup_analysis']
-        summary += f"""
-- **Signup Activity:** {signup.get('total_signups', 0):,} total | {signup.get('success_rate', 0):.1f}% success rate  
-- **Unique IPs (Signup):** {signup.get('unique_ips', 0):,}
-"""
-    
-    if 'suspicious_analysis' in assessment:
-        suspicious = assessment['suspicious_analysis']
-        summary += f"""
-- **Security Alerts:** {suspicious.get('total_alerts', 0):,} total
-- **High-Risk IPs:** {len(suspicious.get('high_risk_ips', [])):,}
-"""
-    
-    return summary
-
 # ------------------------------
 # Main Application
 # ------------------------------
@@ -406,52 +196,39 @@ def main():
         st.session_state.signup_df = None  
     if 'suspicious_df' not in st.session_state:
         st.session_state.suspicious_df = None
-    if 'current_assessment' not in st.session_state:
-        st.session_state.current_assessment = None
+    if 'current_analysis_type' not in st.session_state:
+        st.session_state.current_analysis_type = None
     
     # File uploads
     st.sidebar.header("📁 Upload Security Data")
     
-    login_file = st.sidebar.file_uploader("Login Data (CSV)", type=["csv"], key="login")
-    signup_file = st.sidebar.file_uploader("Signup Data (CSV)", type=["csv"], key="signup")
-    suspicious_file = st.sidebar.file_uploader("Suspicious Activity (CSV)", type=["csv"], key="suspicious")
+    analysis_type = st.sidebar.radio("Select Analysis Type", ["Login Analysis", "Signup Analysis"])
     
-    # Platform filter
-    st.sidebar.header("🔧 Filters")
-    platform_filter = st.sidebar.multiselect(
-        "Platform Filter",
-        ['android', 'ios', 'web', 'other', 'unknown'],
-        default=['android', 'ios', 'web']
-    )
+    if analysis_type == "Login Analysis":
+        uploaded_file = st.sidebar.file_uploader("Upload Login Data (CSV)", type=["csv"], key="login")
+        if uploaded_file:
+            st.session_state.login_df = normalize_dataframe(pd.read_csv(uploaded_file))
+            st.session_state.current_analysis_type = "login"
+    else:
+        uploaded_file = st.sidebar.file_uploader("Upload Signup Data (CSV)", type=["csv"], key="signup")
+        if uploaded_file:
+            st.session_state.signup_df = normalize_dataframe(pd.read_csv(uploaded_file))
+            st.session_state.current_analysis_type = "signup"
     
-    # Process uploaded files
-    if login_file:
-        st.session_state.login_df = normalize_dataframe(pd.read_csv(login_file))
-        if platform_filter:
-            st.session_state.login_df = st.session_state.login_df[st.session_state.login_df['platform'].isin(platform_filter)]
-    
-    if signup_file:
-        st.session_state.signup_df = normalize_dataframe(pd.read_csv(signup_file))
-        if platform_filter:
-            st.session_state.signup_df = st.session_state.signup_df[st.session_state.signup_df['platform'].isin(platform_filter)]
-    
+    suspicious_file = st.sidebar.file_uploader("Upload Suspicious Activity (CSV)", type=["csv"], key="suspicious")
     if suspicious_file:
         st.session_state.suspicious_df = normalize_dataframe(pd.read_csv(suspicious_file))
     
-    # Run analysis when data is available
-    if st.sidebar.button("🚀 Run Security Analysis") or st.session_state.current_assessment is not None:
-        if st.session_state.login_df is not None or st.session_state.signup_df is not None:
-            with st.spinner("🔍 Analyzing security patterns..."):
-                assessment = enhanced_security_assessment(
-                    st.session_state.login_df, 
-                    st.session_state.signup_df,
-                    st.session_state.suspicious_df
-                )
-                st.session_state.current_assessment = assessment
+    # Threshold controls
+    st.sidebar.header("⚙️ Detection Thresholds")
+    burst_threshold = st.sidebar.number_input("Burst threshold (requests within 10 min)", value=10, step=1)
+    burst_window_mins = st.sidebar.number_input("Burst window (minutes)", value=10, step=1)
     
     # Main display
-    if st.session_state.current_assessment:
-        display_security_dashboard(st.session_state.current_assessment)
+    if st.session_state.current_analysis_type == "login" and st.session_state.login_df is not None:
+        display_login_analysis(st.session_state.login_df, burst_threshold, burst_window_mins)
+    elif st.session_state.current_analysis_type == "signup" and st.session_state.signup_df is not None:
+        display_signup_analysis(st.session_state.signup_df, burst_threshold, burst_window_mins)
     else:
         display_welcome_screen()
 
@@ -468,36 +245,35 @@ def display_welcome_screen():
     - **Suspicious Behavior** - Analyze security alerts and bot activity
     
     ### 🚀 Getting Started
-    1. **Upload Login Data** - CSV with login attempts (request_path containing '/login')
-    2. **Upload Signup Data** - CSV with signup attempts (request_path containing '/signup') 
-    3. **Upload Suspicious Activity** - CSV with security alerts (optional)
-    4. **Apply platform filters** if needed
-    5. **Click 'Run Security Analysis'** to generate report
+    1. **Select Analysis Type** in sidebar (Login or Signup)
+    2. **Upload corresponding CSV file**
+    3. **Upload Suspicious Activity data** (optional)
+    4. **Adjust detection thresholds** as needed
+    5. **View comprehensive analysis** with rule categorization
     
     ### 📊 What You'll Get
-    - Executive summary with risk assessment
-    - **Rule Categorization Table** with clear explanations
-    - **Top 10 Suspicious IPs** for login and signup
+    - Rule categorization table with risk assessment
+    - Top suspicious IP analysis
+    - Machine learning anomaly detection
+    - Time-series patterns and trends
     - Platform-wise breakdown
-    - Success/failure rate analysis
     """)
 
-def display_security_dashboard(assessment):
-    """Display the main security dashboard"""
+def display_login_analysis(df, burst_threshold, burst_window_mins):
+    """Display comprehensive login analysis"""
+    st.title("🔐 Login Security Analysis")
     
-    # Executive Summary
-    st.markdown(create_executive_summary(assessment))
+    # Precompute rolling counts
+    df = parse_time_columns(df, time_col='start_time')
+    df = df.sort_values(['true_client_ip', 'start_time']).reset_index(drop=True)
+    df = compute_rolling_counts(df, burst_window_mins)
     
-    st.markdown("---")
-    
-    # 🎯 RULE CATEGORIZATION TABLE (Prominently Displayed)
+    # 🎯 RULE CATEGORIZATION TABLE
     st.header("🎯 Rule Categorization Analysis")
+    categorization = apply_rule_categorization(df)
     
-    if assessment.get('rule_categorization'):
-        categorization_df = pd.DataFrame(assessment['rule_categorization'])
-        
-        # Display with color coding
-        for _, row in categorization_df.iterrows():
+    if categorization:
+        for category in categorization:
             risk_colors = {
                 "CRITICAL": "red",
                 "HIGH": "orange", 
@@ -506,133 +282,204 @@ def display_security_dashboard(assessment):
                 "NORMAL": "green"
             }
             
-            color = risk_colors.get(row['risk_level'], "gray")
+            color = risk_colors.get(category['risk_level'], "gray")
             
             st.markdown(f"""
             <div style="background-color: {color}20; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin: 10px 0;">
-                <h4 style="color: {color}; margin: 0;">{row['category']}</h4>
-                <p style="margin: 5px 0;"><strong>Date:</strong> {row['date']}</p>
-                <p style="margin: 5px 0;"><strong>Explanation:</strong> {row['explanation']}</p>
-                <p style="margin: 5px 0;"><strong>Metrics:</strong> Total OTPs: {row['total_otps']:,} | Max IP Requests: {row['max_requests_ip']} | Max Device Requests: {row['max_requests_device']} | Proxy Ratio: {row['proxy_ratio']}</p>
+                <h4 style="color: {color}; margin: 0;">{category['category']}</h4>
+                <p style="margin: 5px 0;"><strong>Date:</strong> {category['date']}</p>
+                <p style="margin: 5px 0;"><strong>Explanation:</strong> {category['explanation']}</p>
+                <p style="margin: 5px 0;"><strong>Metrics:</strong> Total Logins: {category['total_otps']:,} | Max IP Requests: {category['max_requests_ip']} | Max Device Requests: {category['max_requests_device']} | Proxy Ratio: {category['proxy_ratio']}</p>
             </div>
             """, unsafe_allow_html=True)
-        
-        # Also show as dataframe for detailed view
-        with st.expander("📋 Detailed Categorization Table"):
-            display_df = categorization_df[['date', 'category', 'risk_level', 'total_otps', 'max_requests_ip', 'max_requests_device', 'proxy_ratio']]
-            st.dataframe(display_df, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Top IP Analysis
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🔐 Top 10 Login IPs")
+        if 'true_client_ip' in df.columns:
+            top_ips = df['true_client_ip'].value_counts().head(10).reset_index()
+            top_ips.columns = ['IP Address', 'Login Count']
+            st.dataframe(top_ips, use_container_width=True)
+    
+    with col2:
+        st.subheader("📊 Login Metrics")
+        metrics_col1, metrics_col2 = st.columns(2)
+        with metrics_col1:
+            st.metric("Total Logins", f"{len(df):,}")
+            st.metric("Unique IPs", f"{df['true_client_ip'].nunique():,}")
+        with metrics_col2:
+            if 'response_code' in df.columns:
+                success_rate = (df['response_code'] == 200).mean() * 100
+                st.metric("Success Rate", f"{success_rate:.1f}%")
+    
+    st.markdown("---")
+    
+    # Rule-based anomalies
+    st.header("🚨 Rule-Based Anomalies")
+    
+    # Rule: >9 in 15 minutes
+    rb_15 = df[df['count_15min'] > 9].copy()
+    if not rb_15.empty:
+        rb_15['explanation'] = rb_15.apply(lambda r: explain_rule_row(r, '15min_>9'), axis=1)
+        st.subheader("Rule: more than 9 logins in 15 minutes")
+        st.dataframe(rb_15[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'user_agent', 'explanation']].sort_values('count_15min', ascending=False))
     else:
-        st.info("No rule categorization available.")
+        st.success("No IPs exceed 9 logins in 15 minutes.")
+
+    # Rule: >=5 in 10 minutes
+    rb_10 = df[df['count_10min'] >= 5].copy()
+    if not rb_10.empty:
+        rb_10['explanation'] = rb_10.apply(lambda r: explain_rule_row(r, '10min_>=5'), axis=1)
+        st.subheader("Rule: 5 or more logins in 10 minutes")
+        st.dataframe(rb_10[['start_time', 'true_client_ip', 'request_path', 'count_10min', 'user_agent', 'explanation']].sort_values('count_10min', ascending=False))
+    else:
+        st.info("No IPs with 5 or more logins in 10 minutes.")
+    
+    # ML Anomaly Detection
+    st.header("🤖 Machine Learning Anomaly Detection")
+    features = df[['count_15min', 'count_10min']].fillna(0)
+    iso = IsolationForest(contamination=0.01, random_state=42)
+    df['ml_flag'] = iso.fit_predict(features)
+
+    anomalies_ml = df[df['ml_flag'] == -1].copy()
+    median_15 = max(1.0, df['count_15min'].median())
+    median_10 = max(1.0, df['count_10min'].median())
+
+    if not anomalies_ml.empty:
+        anomalies_ml['reason'] = anomalies_ml.apply(lambda r: explain_ml_row(r, median_15, median_10), axis=1)
+        st.dataframe(anomalies_ml[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'count_10min', 'user_agent', 'akamai_bot', 'reason']].sort_values(['count_15min','count_10min'], ascending=False))
+    else:
+        st.success("Isolation Forest did not detect anomalies in this dataset.")
+
+def display_signup_analysis(df, burst_threshold, burst_window_mins):
+    """Display comprehensive signup analysis"""
+    st.title("📝 Signup Security Analysis")
+    
+    # Precompute rolling counts
+    df = parse_time_columns(df, time_col='start_time')
+    df = df.sort_values(['true_client_ip', 'start_time']).reset_index(drop=True)
+    df = compute_rolling_counts(df, burst_window_mins)
+    
+    # 🎯 RULE CATEGORIZATION TABLE
+    st.header("🎯 Rule Categorization Analysis")
+    categorization = apply_rule_categorization(df)
+    
+    if categorization:
+        for category in categorization:
+            risk_colors = {
+                "CRITICAL": "red",
+                "HIGH": "orange", 
+                "MEDIUM": "yellow",
+                "LOW": "blue",
+                "NORMAL": "green"
+            }
+            
+            color = risk_colors.get(category['risk_level'], "gray")
+            
+            st.markdown(f"""
+            <div style="background-color: {color}20; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin: 10px 0;">
+                <h4 style="color: {color}; margin: 0;">{category['category']}</h4>
+                <p style="margin: 5px 0;"><strong>Date:</strong> {category['date']}</p>
+                <p style="margin: 5px 0;"><strong>Explanation:</strong> {category['explanation']}</p>
+                <p style="margin: 5px 0;"><strong>Metrics:</strong> Total Signups: {category['total_otps']:,} | Max IP Requests: {category['max_requests_ip']} | Max Device Requests: {category['max_requests_device']} | Proxy Ratio: {category['proxy_ratio']}</p>
+            </div>
+            """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # SIMPLIFIED IP ANALYSIS - Just Top 10 Tables
+    # Top IP Analysis
     col1, col2 = st.columns(2)
     
     with col1:
-        # Top 10 Login IPs
-        if assessment.get('top_login_ips'):
-            st.subheader("🔐 Top 10 Login IPs")
-            login_ips_df = pd.DataFrame(assessment['top_login_ips'])
-            st.dataframe(login_ips_df, use_container_width=True)
-        else:
-            st.info("No login IP data available")
+        st.subheader("📝 Top 10 Signup IPs")
+        if 'true_client_ip' in df.columns:
+            top_ips = df['true_client_ip'].value_counts().head(10).reset_index()
+            top_ips.columns = ['IP Address', 'Signup Count']
+            st.dataframe(top_ips, use_container_width=True)
     
     with col2:
-        # Top 10 Signup IPs
-        if assessment.get('top_signup_ips'):
-            st.subheader("📝 Top 10 Signup IPs")
-            signup_ips_df = pd.DataFrame(assessment['top_signup_ips'])
-            st.dataframe(signup_ips_df, use_container_width=True)
-        else:
-            st.info("No signup IP data available")
+        st.subheader("📊 Signup Metrics")
+        metrics_col1, metrics_col2 = st.columns(2)
+        with metrics_col1:
+            st.metric("Total Signups", f"{len(df):,}")
+            st.metric("Unique IPs", f"{df['true_client_ip'].nunique():,}")
+        with metrics_col2:
+            if 'response_code' in df.columns:
+                success_rate = (df['response_code'] == 200).mean() * 100
+                st.metric("Success Rate", f"{success_rate:.1f}%")
     
     st.markdown("---")
     
-    # Detailed Analysis Sections
-    col1, col2 = st.columns(2)
+    # Rule-based anomalies
+    st.header("🚨 Rule-Based Anomalies")
     
-    with col1:
-        # Login Analysis
-        if 'login_analysis' in assessment:
-            display_login_analysis(assessment['login_analysis'])
-    
-    with col2:
-        # Signup Analysis  
-        if 'signup_analysis' in assessment:
-            display_signup_analysis(assessment['signup_analysis'])
-        
-        # Platform Breakdown
-        display_platform_analysis(assessment)
+    # Rule: >9 in 15 minutes
+    rb_15 = df[df['count_15min'] > 9].copy()
+    if not rb_15.empty:
+        rb_15['explanation'] = rb_15.apply(lambda r: explain_rule_row(r, '15min_>9'), axis=1)
+        st.subheader("Rule: more than 9 signups in 15 minutes")
+        st.dataframe(rb_15[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'user_agent', 'explanation']].sort_values('count_15min', ascending=False))
+    else:
+        st.success("No IPs exceed 9 signups in 15 minutes.")
 
-def display_login_analysis(analysis):
-    """Display login analysis details with clear explanations"""
-    st.subheader("🔐 Login Activity Analysis")
+    # Rule: >=5 in 10 minutes
+    rb_10 = df[df['count_10min'] >= 5].copy()
+    if not rb_10.empty:
+        rb_10['explanation'] = rb_10.apply(lambda r: explain_rule_row(r, '10min_>=5'), axis=1)
+        st.subheader("Rule: 5 or more signups in 10 minutes")
+        st.dataframe(rb_10[['start_time', 'true_client_ip', 'request_path', 'count_10min', 'user_agent', 'explanation']].sort_values('count_10min', ascending=False))
+    else:
+        st.info("No IPs with 5 or more signups in 10 minutes.")
     
-    metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-    
-    with metrics_col1:
-        st.metric("Total Logins", f"{analysis.get('total_logins', 0):,}")
-        st.metric("Unique IPs", f"{analysis.get('unique_ips', 0):,}")
-    
-    with metrics_col2:
-        success_rate = analysis.get('success_rate', 0)
-        color = "red" if success_rate < 50 else "green"
-        st.metric("Success Rate", f"{success_rate:.1f}%", delta=None, delta_color="normal")
-    
-    with metrics_col3:
-        st.metric("Failed Logins", f"{analysis.get('failed_requests', 0):,}")
+    # ML Anomaly Detection
+    st.header("🤖 Machine Learning Anomaly Detection")
+    features = df[['count_15min', 'count_10min']].fillna(0)
+    iso = IsolationForest(contamination=0.01, random_state=42)
+    df['ml_flag'] = iso.fit_predict(features)
 
-def display_signup_analysis(analysis):
-    """Display signup analysis details with clear explanations"""
-    st.subheader("📝 Signup Activity Analysis")
-    
-    metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-    
-    with metrics_col1:
-        st.metric("Total Signups", f"{analysis.get('total_signups', 0):,}")
-        st.metric("Unique IPs", f"{analysis.get('unique_ips', 0):,}")
-    
-    with metrics_col2:
-        success_rate = analysis.get('success_rate', 0)
-        st.metric("Success Rate", f"{success_rate:.1f}%")
-    
-    with metrics_col3:
-        st.metric("Failed Signups", f"{analysis.get('failed_requests', 0):,}")
+    anomalies_ml = df[df['ml_flag'] == -1].copy()
+    median_15 = max(1.0, df['count_15min'].median())
+    median_10 = max(1.0, df['count_10min'].median())
 
-def display_platform_analysis(assessment):
-    """Display platform-wise analysis"""
-    st.subheader("📱 Platform Analysis")
+    if not anomalies_ml.empty:
+        anomalies_ml['reason'] = anomalies_ml.apply(lambda r: explain_ml_row(r, median_15, median_10), axis=1)
+        st.dataframe(anomalies_ml[['start_time', 'true_client_ip', 'request_path', 'count_15min', 'count_10min', 'user_agent', 'akamai_bot', 'reason']].sort_values(['count_15min','count_10min'], ascending=False))
+    else:
+        st.success("Isolation Forest did not detect anomalies in this dataset.")
+
+def compute_rolling_counts(df, burst_window_mins):
+    """Compute rolling counts for anomaly detection"""
+    df['__ts'] = (df['start_time'].astype('int64') // 10**9).astype(np.int64)
+
+    grouped_times = df.groupby('true_client_ip')['__ts'].apply(list).to_dict()
+
+    rows = []
+    for ip, times in grouped_times.items():
+        times_arr = np.array(times, dtype=np.int64)
+        n = len(times_arr)
+        c15 = np.empty(n, dtype=np.int32)
+        c10 = np.empty(n, dtype=np.int32)
+        for i, t in enumerate(times_arr):
+            left15 = t - 900  # 15min
+            left10 = t - 600  # 10min
+            l15 = np.searchsorted(times_arr, left15, side='left')
+            l10 = np.searchsorted(times_arr, left10, side='left')
+            r = np.searchsorted(times_arr, t, side='right')
+            c15[i] = int(r - l15)
+            c10[i] = int(r - l10)
+        for t, a, b in zip(times_arr, c15, c10):
+            rows.append({'true_client_ip': ip, '__ts': int(t), 'count_15min': int(a), 'count_10min': int(b)})
+
+    counts_df = pd.DataFrame(rows)
+    df = df.merge(counts_df, on=['true_client_ip', '__ts'], how='left')
+    df['count_15min'] = df['count_15min'].fillna(0).astype(int)
+    df['count_10min'] = df['count_10min'].fillna(0).astype(int)
     
-    platform_data = {}
-    
-    # Collect platform data from all sources
-    for source in ['login_analysis', 'signup_analysis']:
-        if source in assessment:
-            analysis = assessment[source]
-            if 'platform_breakdown' in analysis:
-                for platform, count in analysis['platform_breakdown'].items():
-                    if platform not in platform_data:
-                        platform_data[platform] = {'logins': 0, 'signups': 0}
-                    if 'login' in source:
-                        platform_data[platform]['logins'] += count
-                    else:
-                        platform_data[platform]['signups'] += count
-    
-    if platform_data:
-        platform_df = pd.DataFrame(platform_data).T.fillna(0)
-        platform_df['total'] = platform_df.sum(axis=1)
-        platform_df = platform_df.sort_values('total', ascending=False)
-        
-        st.dataframe(platform_df)
-        
-        # Platform distribution chart
-        fig = px.pie(
-            values=platform_df['total'], 
-            names=platform_df.index,
-            title="Request Distribution by Platform"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    return df
 
 if __name__ == "__main__":
     main()
