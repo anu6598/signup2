@@ -34,6 +34,7 @@ def normalize_dataframe(df_raw):
     col_device = pick_col(["dr_dv", "device_id", "device"])
     col_akamai_epd = pick_col(["akamai_epd", "epd", "akamai_proxy"])
     col_user = pick_col(["username", "user", "user_id", "email"])
+    col_platform = pick_col(["platform", "app_version", "source", "client_type"])
 
     # Set time column - use the first available time column
     if col_time:
@@ -43,9 +44,11 @@ def normalize_dataframe(df_raw):
         df["timestamp"] = pd.to_datetime("today")
     
     df["ip_address"] = df[col_ip].astype(str) if col_ip else "unknown"
+    df["true_client_ip"] = df["ip_address"]  # Ensure true_client_ip exists
     df["device_id"] = df[col_device].astype(str) if col_device else np.nan
     df["username"] = df[col_user].astype(str) if col_user else np.nan
     df["akamai_epd"] = df[col_akamai_epd] if col_akamai_epd else np.nan
+    df["platform"] = df[col_platform].astype(str) if col_platform else "unknown"
     df["is_proxy"] = df["akamai_epd"].notna() & (df["akamai_epd"] != "")
 
     return df
@@ -78,14 +81,14 @@ def analyze_brute_force_patterns(df):
     df = prepare_hourly_data(df)
     
     # 🎯 HOURLY IP ANALYSIS
-    hourly_ip_analysis = df.groupby(['date', 'hour_bucket', 'ip_address']).agg({
+    hourly_ip_analysis = df.groupby(['date', 'hour_bucket', 'ip_address', 'platform']).agg({
         'timestamp': 'count',
         'username': 'nunique',
         'device_id': 'nunique',
         'is_proxy': 'mean'
     }).reset_index()
     
-    hourly_ip_analysis.columns = ['date', 'hour_bucket', 'ip_address', 'request_count', 
+    hourly_ip_analysis.columns = ['date', 'hour_bucket', 'ip_address', 'platform', 'request_count', 
                                  'unique_users', 'unique_devices', 'proxy_ratio']
     
     # 🎯 BRUTE FORCE DETECTION RULES
@@ -132,6 +135,7 @@ def analyze_brute_force_patterns(df):
         if total_score >= 4:  # Threshold for suspicion
             suspicious_ips.append({
                 'ip_address': ip,
+                'platform': row['platform'],
                 'date': row['date'],
                 'hour_bucket': row['hour_bucket'],
                 'request_count': row['request_count'],
@@ -160,10 +164,10 @@ def detect_advanced_patterns(df):
     
     # Pattern 1: Rapid succession attempts (same IP, different users)
     if 'username' in df.columns:
-        user_switching = df.groupby(['ip_address', 'hour_bucket']).agg({
+        user_switching = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg({
             'username': ['count', 'nunique']
         }).reset_index()
-        user_switching.columns = ['ip_address', 'hour_bucket', 'total_attempts', 'unique_users']
+        user_switching.columns = ['ip_address', 'hour_bucket', 'platform', 'total_attempts', 'unique_users']
         user_switching['user_switch_ratio'] = user_switching['unique_users'] / user_switching['total_attempts']
         
         high_switching = user_switching[
@@ -175,6 +179,7 @@ def detect_advanced_patterns(df):
             patterns.append({
                 'pattern_type': 'CREDENTIAL_STUFFING',
                 'ip_address': row['ip_address'],
+                'platform': row['platform'],
                 'hour_bucket': row['hour_bucket'],
                 'metric': f"High user switching ({row['user_switch_ratio']:.1%})",
                 'attempts': row['total_attempts'],
@@ -183,10 +188,10 @@ def detect_advanced_patterns(df):
     
     # Pattern 2: Distributed attacks (multiple IPs, same user)
     if 'username' in df.columns:
-        user_targeting = df.groupby(['username', 'hour_bucket']).agg({
+        user_targeting = df.groupby(['username', 'hour_bucket', 'platform']).agg({
             'ip_address': 'nunique'
         }).reset_index()
-        user_targeting.columns = ['username', 'hour_bucket', 'unique_ips']
+        user_targeting.columns = ['username', 'hour_bucket', 'platform', 'unique_ips']
         
         high_targeting = user_targeting[user_targeting['unique_ips'] > 3]
         
@@ -194,16 +199,17 @@ def detect_advanced_patterns(df):
             patterns.append({
                 'pattern_type': 'DISTRIBUTED_ATTACK',
                 'username': row['username'],
+                'platform': row['platform'],
                 'hour_bucket': row['hour_bucket'],
                 'metric': f"Multiple source IPs ({row['unique_ips']})",
                 'unique_ips': row['unique_ips']
             })
     
     # Pattern 3: High frequency attempts from single IP
-    ip_frequency = df.groupby(['ip_address', 'hour_bucket']).agg({
+    ip_frequency = df.groupby(['ip_address', 'hour_bucket', 'platform']).agg({
         'timestamp': 'count'
     }).reset_index()
-    ip_frequency.columns = ['ip_address', 'hour_bucket', 'attempt_count']
+    ip_frequency.columns = ['ip_address', 'hour_bucket', 'platform', 'attempt_count']
     
     high_frequency = ip_frequency[ip_frequency['attempt_count'] > 20]
     
@@ -211,6 +217,7 @@ def detect_advanced_patterns(df):
         patterns.append({
             'pattern_type': 'HIGH_FREQUENCY',
             'ip_address': row['ip_address'],
+            'platform': row['platform'],
             'hour_bucket': row['hour_bucket'],
             'metric': f"High attempt frequency ({row['attempt_count']} requests)",
             'attempt_count': row['attempt_count']
@@ -218,7 +225,60 @@ def detect_advanced_patterns(df):
     
     return pd.DataFrame(patterns)
 
-def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patterns):
+def create_rule_categorization_table(df):
+    """Create daily categorization table with OTP-specific rules"""
+    if df is None or df.empty:
+        return []
+    
+    # Prepare data with dates
+    df = prepare_hourly_data(df)
+    
+    final_categories = []
+    
+    # Group by date for daily analysis
+    date_groups = df.groupby('date')
+    
+    for day, group in date_groups:
+        total_otps = len(group)
+        
+        # Calculate metrics for rule categorization
+        max_requests_ip = group['ip_address'].value_counts().max() if 'ip_address' in group.columns else 0
+        max_requests_device = group['device_id'].value_counts().max() if 'device_id' in group.columns else 0
+        
+        # Proxy ratio calculation
+        if "akamai_epd" in group.columns:
+            epd_norm = group["akamai_epd"].astype(str).str.strip().str.lower()
+            proxy_ratio = (~epd_norm.isin(["-", "rp", "", "nan"])).mean() * 100
+        else:
+            proxy_ratio = 0
+
+        # 🎯 OTP RULE CATEGORIZATION
+        if (total_otps > 1000) and (max_requests_ip > 25) and (proxy_ratio > 20) and (max_requests_device > 15):
+            category = "OTP Abuse/Attack detected"
+            risk_level = "CRITICAL"
+        elif (max_requests_ip > 25) and (total_otps > 1000) and (max_requests_device > 15):
+            category = "HIGH OTP request detected"
+            risk_level = "HIGH"
+        elif proxy_ratio > 20:
+            category = "HIGH proxy status detected"
+            risk_level = "HIGH"
+        else:
+            category = "No suspicious activity detected"
+            risk_level = "NORMAL"
+
+        final_categories.append({
+            "date": day,
+            "category": category,
+            "risk_level": risk_level,
+            "total_otps": total_otps,
+            "max_requests_ip": max_requests_ip,
+            "max_requests_device": max_requests_device,
+            "proxy_ratio": f"{proxy_ratio:.1f}%"
+        })
+
+    return final_categories
+
+def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patterns, categorization):
     """Create comprehensive brute force detection dashboard"""
     
     st.header("🚨 Brute Force Attack Detection")
@@ -245,11 +305,44 @@ def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patte
     
     st.markdown("---")
     
+    # Rule Categorization Table
+    st.subheader("📊 Daily OTP Rule Categorization")
+    if categorization:
+        # Display with color coding
+        for category in categorization:
+            risk_colors = {
+                "CRITICAL": "red",
+                "HIGH": "orange", 
+                "NORMAL": "green"
+            }
+            
+            color = risk_colors.get(category['risk_level'], "gray")
+            
+            st.markdown(f"""
+            <div style="background-color: {color}20; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin: 10px 0;">
+                <h4 style="color: {color}; margin: 0;">{category['category']}</h4>
+                <p style="margin: 5px 0;"><strong>Date:</strong> {category['date']}</p>
+                <p style="margin: 5px 0;"><strong>Total OTPs:</strong> {category['total_otps']:,}</p>
+                <p style="margin: 5px 0;"><strong>Max Requests per IP:</strong> {category['max_requests_ip']}</p>
+                <p style="margin: 5px 0;"><strong>Max Requests per Device:</strong> {category['max_requests_device']}</p>
+                <p style="margin: 5px 0;"><strong>Proxy Ratio:</strong> {category['proxy_ratio']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Also show as dataframe
+        st.subheader("📋 Categorization Summary Table")
+        cat_df = pd.DataFrame(categorization)
+        st.dataframe(cat_df, use_container_width=True)
+    else:
+        st.info("No categorization data available.")
+    
+    st.markdown("---")
+    
     # Suspicious IPs Table
     st.subheader("🔍 Suspicious IPs - Hourly Analysis")
     if not suspicious_ips.empty:
         # Sort by risk score and show details
-        display_cols = ['ip_address', 'hour_bucket', 'request_count', 'unique_users', 
+        display_cols = ['ip_address', 'platform', 'hour_bucket', 'request_count', 'unique_users', 
                        'unique_devices', 'proxy_ratio', 'total_risk_score', 'risk_level']
         
         suspicious_display = suspicious_ips[display_cols].sort_values(['total_risk_score', 'request_count'], ascending=False)
@@ -267,10 +360,23 @@ def create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patte
     else:
         st.success("✅ No suspicious IPs detected in hourly analysis")
     
-    # Advanced Patterns
+    # Advanced Patterns with Filter
     if not advanced_patterns.empty:
         st.subheader("🎯 Advanced Attack Patterns")
-        st.dataframe(advanced_patterns, use_container_width=True)
+        
+        # Pattern type filter
+        pattern_types = advanced_patterns['pattern_type'].unique()
+        selected_patterns = st.multiselect(
+            "Filter by Pattern Type:",
+            options=pattern_types,
+            default=pattern_types,
+            key="pattern_filter"
+        )
+        
+        filtered_patterns = advanced_patterns[advanced_patterns['pattern_type'].isin(selected_patterns)]
+        st.dataframe(filtered_patterns, use_container_width=True)
+    else:
+        st.info("No advanced attack patterns detected")
     
     # Hourly Trends Visualization
     if not hourly_analysis.empty:
@@ -303,7 +409,7 @@ def create_ip_behavior_analysis(df):
     df = prepare_hourly_data(df)
     
     # Group by IP and analyze behavior
-    ip_behavior = df.groupby('ip_address').agg({
+    ip_behavior = df.groupby(['ip_address', 'platform']).agg({
         'timestamp': ['count', lambda x: (x.max() - x.min()).total_seconds() / 3600],  # activity duration in hours
         'username': 'nunique',
         'device_id': 'nunique',
@@ -311,7 +417,7 @@ def create_ip_behavior_analysis(df):
         'hour_bucket': 'nunique'
     }).reset_index()
     
-    ip_behavior.columns = ['ip_address', 'total_requests', 'activity_hours', 
+    ip_behavior.columns = ['ip_address', 'platform', 'total_requests', 'activity_hours', 
                           'unique_users', 'unique_devices', 'proxy_ratio', 'unique_hours']
     
     # Calculate requests per hour
@@ -339,6 +445,44 @@ def create_ip_behavior_analysis(df):
     
     return ip_behavior.sort_values('total_risk_score', ascending=False).head(20)
 
+def display_suspicious_activity_log(suspicious_df):
+    """Display suspicious activity log data"""
+    st.header("📋 Suspicious Activity Log")
+    
+    if suspicious_df is not None and not suspicious_df.empty:
+        # Normalize column names for suspicious activity log
+        suspicious_df = normalize_dataframe(suspicious_df)
+        
+        # Ensure required columns exist
+        if 'true_client_ip' in suspicious_df.columns:
+            # Select relevant columns
+            display_cols = []
+            possible_cols = ['true_client_ip', 'risk_analysis_score', 'reason', 'country_code', 
+                           'timestamp', 'platform', 'ip_address']
+            
+            for col in possible_cols:
+                if col in suspicious_df.columns:
+                    display_cols.append(col)
+            
+            if display_cols:
+                st.dataframe(suspicious_df[display_cols], use_container_width=True)
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Suspicious Entries", len(suspicious_df))
+                with col2:
+                    if 'country_code' in suspicious_df.columns:
+                        st.metric("Unique Countries", suspicious_df['country_code'].nunique())
+                with col3:
+                    st.metric("Unique IPs", suspicious_df['true_client_ip'].nunique())
+            else:
+                st.warning("No relevant columns found in suspicious activity log")
+        else:
+            st.warning("Suspicious activity log missing 'true_client_ip' column")
+    else:
+        st.info("No suspicious activity log data uploaded")
+
 # ------------------------------
 # Main Application
 # ------------------------------
@@ -348,20 +492,32 @@ def main():
     # Initialize session state
     if 'current_df' not in st.session_state:
         st.session_state.current_df = None
-    if 'analysis_results' not in st.session_state:
-        st.session_state.analysis_results = None
+    if 'suspicious_df' not in st.session_state:
+        st.session_state.suspicious_df = None
     
-    # File upload
+    # File uploads
     st.sidebar.header("📁 Upload Security Data")
+    
+    # Main authentication data
     uploaded_file = st.sidebar.file_uploader("Upload Authentication Data (CSV)", type=["csv"])
     
     if uploaded_file:
         try:
             df = normalize_dataframe(pd.read_csv(uploaded_file))
             st.session_state.current_df = df
-            st.sidebar.success("✅ Data loaded successfully!")
+            st.sidebar.success("✅ Authentication data loaded successfully!")
         except Exception as e:
-            st.sidebar.error(f"Error loading data: {str(e)}")
+            st.sidebar.error(f"Error loading authentication data: {str(e)}")
+    
+    # Suspicious activity log
+    suspicious_file = st.sidebar.file_uploader("Upload Suspicious Activity Log (CSV)", type=["csv"], key="suspicious")
+    if suspicious_file:
+        try:
+            suspicious_df = normalize_dataframe(pd.read_csv(suspicious_file))
+            st.session_state.suspicious_df = suspicious_df
+            st.sidebar.success("✅ Suspicious activity log loaded!")
+        except Exception as e:
+            st.sidebar.error(f"Error loading suspicious activity log: {str(e)}")
     
     # Analysis controls
     st.sidebar.header("⚙️ Detection Settings")
@@ -370,7 +526,7 @@ def main():
     
     # Main display
     if st.session_state.current_df is not None:
-        display_analysis_dashboard(st.session_state.current_df, min_requests, risk_threshold)
+        display_analysis_dashboard(st.session_state.current_df, st.session_state.suspicious_df, min_requests, risk_threshold)
     else:
         display_welcome_screen()
 
@@ -389,9 +545,10 @@ def display_welcome_screen():
     
     ### 🚀 Getting Started
     1. **Upload authentication data** (login or signup CSV)
-    2. **Adjust detection sensitivity** in sidebar
-    3. **View comprehensive analysis** with hourly patterns
-    4. **Identify suspicious IPs** and attack patterns
+    2. **Upload suspicious activity log** (optional)
+    3. **Adjust detection sensitivity** in sidebar
+    4. **View comprehensive analysis** with hourly patterns
+    5. **Identify suspicious IPs** and attack patterns
     
     ### 📊 Detection Methodology
     - **Hourly bucketing** for temporal analysis
@@ -400,47 +557,84 @@ def display_welcome_screen():
     - **Proxy detection** and behavioral analysis
     """)
 
-def display_analysis_dashboard(df, min_requests, risk_threshold):
+def display_analysis_dashboard(df, suspicious_df, min_requests, risk_threshold):
     """Display comprehensive brute force analysis"""
     st.title("🔐 Brute Force Attack Analysis")
+    
+    # Global Filters
+    st.sidebar.header("🔍 Global Filters")
+    
+    # IP Filter
+    if 'true_client_ip' in df.columns:
+        unique_ips = df['true_client_ip'].unique()
+        selected_ips = st.sidebar.multiselect(
+            "Filter by IP Address:",
+            options=unique_ips,
+            default=[],
+            key="ip_filter"
+        )
+    else:
+        selected_ips = []
+    
+    # Platform Filter
+    if 'platform' in df.columns:
+        unique_platforms = df['platform'].unique()
+        selected_platforms = st.sidebar.multiselect(
+            "Filter by Platform:",
+            options=unique_platforms,
+            default=unique_platforms,
+            key="platform_filter"
+        )
+    else:
+        selected_platforms = []
+    
+    # Apply filters
+    filtered_df = df.copy()
+    if selected_ips:
+        filtered_df = filtered_df[filtered_df['true_client_ip'].isin(selected_ips)]
+    if selected_platforms:
+        filtered_df = filtered_df[filtered_df['platform'].isin(selected_platforms)]
     
     # Show data overview
     st.subheader("📋 Data Overview")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric("Total Records", f"{len(df):,}")
-        if 'ip_address' in df.columns:
-            st.metric("Unique IPs", f"{df['ip_address'].nunique():,}")
+        st.metric("Total Records", f"{len(filtered_df):,}")
+        if 'ip_address' in filtered_df.columns:
+            st.metric("Unique IPs", f"{filtered_df['ip_address'].nunique():,}")
     
     with col2:
-        if 'username' in df.columns:
-            st.metric("Unique Users", f"{df['username'].nunique():,}")
-        if 'device_id' in df.columns:
-            st.metric("Unique Devices", f"{df['device_id'].nunique():,}")
+        if 'username' in filtered_df.columns:
+            st.metric("Unique Users", f"{filtered_df['username'].nunique():,}")
+        if 'device_id' in filtered_df.columns:
+            st.metric("Unique Devices", f"{filtered_df['device_id'].nunique():,}")
     
     with col3:
-        if 'timestamp' in df.columns:
-            time_range = df['timestamp'].max() - df['timestamp'].min()
+        if 'platform' in filtered_df.columns:
+            st.metric("Platforms", f"{filtered_df['platform'].nunique():,}")
+        if 'timestamp' in filtered_df.columns:
+            time_range = filtered_df['timestamp'].max() - filtered_df['timestamp'].min()
             st.metric("Time Range", f"{time_range.days} days, {time_range.seconds//3600} hours")
     
     st.markdown("---")
     
-    # Run brute force analysis
+    # Run brute force analysis on filtered data
     with st.spinner("🔍 Analyzing brute force patterns..."):
-        hourly_analysis, suspicious_ips = analyze_brute_force_patterns(df)
-        advanced_patterns = detect_advanced_patterns(df)
-        ip_behavior = create_ip_behavior_analysis(df)
+        hourly_analysis, suspicious_ips = analyze_brute_force_patterns(filtered_df)
+        advanced_patterns = detect_advanced_patterns(filtered_df)
+        ip_behavior = create_ip_behavior_analysis(filtered_df)
+        categorization = create_rule_categorization_table(filtered_df)
     
     # Display main dashboard
-    create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patterns)
+    create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patterns, categorization)
     
     # IP Behavior Analysis
     if not ip_behavior.empty:
         st.markdown("---")
         st.header("📊 IP Behavior Analysis (Top 20)")
         
-        display_cols = ['ip_address', 'total_requests', 'activity_hours', 'requests_per_hour',
+        display_cols = ['ip_address', 'platform', 'total_requests', 'activity_hours', 'requests_per_hour',
                        'unique_users', 'unique_devices', 'proxy_ratio', 'total_risk_score', 'risk_level']
         
         st.dataframe(ip_behavior[display_cols], use_container_width=True)
@@ -451,9 +645,14 @@ def display_analysis_dashboard(df, min_requests, risk_threshold):
             st.plotly_chart(px.pie(values=risk_dist.values, names=risk_dist.index, 
                                  title="Risk Level Distribution"), use_container_width=True)
     
+    # Suspicious Activity Log
+    if suspicious_df is not None:
+        st.markdown("---")
+        display_suspicious_activity_log(suspicious_df)
+    
     # Raw data preview
     with st.expander("📋 Raw Data Preview"):
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(filtered_df.head(10), use_container_width=True)
 
 if __name__ == "__main__":
     main()
