@@ -962,3 +962,189 @@ def display_analysis_dashboard(df, suspicious_df, min_requests, risk_threshold):
 
 if __name__ == "__main__":
     main()
+# Add this function to create the device analysis table
+def create_device_analysis_table(df):
+    """Create a simple table of device_id, total requests, and proxy status"""
+    if df is None or df.empty or 'device_id' not in df.columns:
+        return pd.DataFrame()
+    
+    # Prepare data
+    df = df.copy()
+    
+    # Calculate proxy status
+    if 'akamai_epd' in df.columns:
+        # Consider as proxy if akamai_epd is not blank, not '-', and not 'hp'
+        df['is_proxy'] = df['akamai_epd'].astype(str).apply(
+            lambda x: 'Yes' if x not in ['', '-', 'hp', 'nan', 'None'] else 'No'
+        )
+    else:
+        df['is_proxy'] = 'No'
+    
+    # Group by device_id and count total requests
+    device_analysis = df.groupby('device_id').agg({
+        'timestamp': 'count',  # Total number of requests
+        'is_proxy': 'first'    # Take the first proxy status for each device
+    }).reset_index()
+    
+    device_analysis.columns = ['device_id', 'total_requests', 'is_proxy']
+    
+    # Sort by total_requests descending
+    device_analysis = device_analysis.sort_values('total_requests', ascending=False)
+    
+    return device_analysis
+
+# Then add this to the display_analysis_dashboard function, right after the IP Behavior Analysis section:
+def display_analysis_dashboard(df, suspicious_df, min_requests, risk_threshold):
+    """Display comprehensive brute force analysis"""
+    st.title("🔐 Brute Force Attack Analysis")
+    
+    # ... (keep all the existing global filters and data overview code exactly as is) ...
+    
+    # Global Filters
+    st.sidebar.header("🔍 Global Filters")
+    
+    # IP Filter
+    if 'true_client_ip' in df.columns:
+        unique_ips = df['true_client_ip'].unique()
+        selected_ips = st.sidebar.multiselect(
+            "Filter by IP Address:",
+            options=unique_ips,
+            default=[],
+            key="ip_filter"
+        )
+    else:
+        selected_ips = []
+    
+    # Platform Filter
+    if 'platform' in df.columns:
+        unique_platforms = df['platform'].unique()
+        selected_platforms = st.sidebar.multiselect(
+            "Filter by Platform:",
+            options=unique_platforms,
+            default=unique_platforms,
+            key="platform_filter"
+        )
+    else:
+        selected_platforms = []
+    
+    # Risk Score Filter (only if column exists)
+    if 'risk_analysis_score' in df.columns:
+        min_risk = st.sidebar.slider(
+            "Minimum Risk Score:",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.0,
+            step=0.1,
+            key="risk_filter"
+        )
+    else:
+        min_risk = 0.0
+    
+    # Apply filters
+    filtered_df = df.copy()
+    if selected_ips:
+        filtered_df = filtered_df[filtered_df['true_client_ip'].isin(selected_ips)]
+    if selected_platforms:
+        filtered_df = filtered_df[filtered_df['platform'].isin(selected_platforms)]
+    if 'risk_analysis_score' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['risk_analysis_score'] >= min_risk]
+    
+    # Show data overview
+    st.subheader("📋 Data Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Records", f"{len(filtered_df):,}")
+        if 'ip_address' in filtered_df.columns:
+            st.metric("Unique IPs", f"{filtered_df['ip_address'].nunique():,}")
+    
+    with col2:
+        if 'username' in filtered_df.columns:
+            st.metric("Unique Users", f"{filtered_df['username'].nunique():,}")
+        if 'device_id' in filtered_df.columns:
+            st.metric("Unique Devices", f"{filtered_df['device_id'].nunique():,}")
+    
+    with col3:
+        if 'platform' in filtered_df.columns:
+            st.metric("Platforms", f"{filtered_df['platform'].nunique():,}")
+        if 'timestamp' in filtered_df.columns:
+            time_range = filtered_df['timestamp'].max() - filtered_df['timestamp'].min()
+            st.metric("Time Range", f"{time_range.days} days, {time_range.seconds//3600} hours")
+    
+    with col4:
+        if 'risk_analysis_score' in filtered_df.columns:
+            avg_risk = filtered_df['risk_analysis_score'].mean()
+            high_risk = len(filtered_df[filtered_df['risk_analysis_score'] > 0.7])
+            st.metric("Avg Risk Score", f"{avg_risk:.3f}")
+            st.metric("High Risk Entries", high_risk)
+        else:
+            st.metric("Recaptcha Data", "Not Available")
+    
+    st.markdown("---")
+    
+    # Run brute force analysis on filtered data
+    with st.spinner("🔍 Analyzing brute force patterns..."):
+        hourly_analysis, suspicious_ips = analyze_brute_force_patterns(filtered_df)
+        advanced_patterns = detect_advanced_patterns(filtered_df)
+        ip_behavior = create_ip_behavior_analysis(filtered_df)
+        categorization = create_rule_categorization_table(filtered_df)
+        device_analysis = create_device_analysis_table(filtered_df)  # NEW: Add device analysis
+    
+    # Display main dashboard
+    create_brute_force_dashboard(hourly_analysis, suspicious_ips, advanced_patterns, categorization)
+    
+    # IP Behavior Analysis
+    if not ip_behavior.empty:
+        st.markdown("---")
+        st.header("📊 IP Behavior Analysis (Top 20)")
+        
+        display_cols = ['ip_address', 'platform', 'total_requests', 'activity_hours', 'requests_per_hour',
+                       'unique_users', 'unique_devices', 'proxy_ratio', 'total_risk_score', 'risk_level']
+        
+        # Add optional columns only if they exist
+        optional_cols = ['avg_risk_score', 'high_risk_count', 'suspicious_env_count']
+        available_cols = display_cols + [col for col in optional_cols if col in ip_behavior.columns]
+        
+        st.dataframe(ip_behavior[available_cols], use_container_width=True)
+        
+        # Risk distribution
+        if 'risk_level' in ip_behavior.columns:
+            risk_dist = ip_behavior['risk_level'].value_counts()
+            if not risk_dist.empty:
+                st.plotly_chart(px.pie(values=risk_dist.values, names=risk_dist.index, 
+                                     title="Risk Level Distribution"), use_container_width=True)
+    
+    # NEW: Device Analysis Table
+    if not device_analysis.empty:
+        st.markdown("---")
+        st.header("📱 Device Analysis")
+        
+        # Show summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            total_devices = len(device_analysis)
+            st.metric("Total Devices", total_devices)
+        with col2:
+            proxy_devices = len(device_analysis[device_analysis['is_proxy'] == 'Yes'])
+            st.metric("Proxy Devices", proxy_devices)
+        with col3:
+            avg_requests_per_device = device_analysis['total_requests'].mean()
+            st.metric("Avg Requests/Device", f"{avg_requests_per_device:.1f}")
+        
+        # Show the device table
+        st.subheader("Device Request Summary")
+        st.dataframe(device_analysis, use_container_width=True)
+        
+        # Optional: Show top devices with most requests
+        st.subheader("Top 10 Devices by Request Count")
+        top_devices = device_analysis.head(10)
+        st.dataframe(top_devices, use_container_width=True)
+    
+    # Suspicious Activity Log
+    if suspicious_df is not None:
+        st.markdown("---")
+        display_suspicious_activity_log(suspicious_df)
+    
+    # Raw data preview
+    with st.expander("📋 Raw Data Preview"):
+        st.dataframe(filtered_df.head(10), use_container_width=True)
